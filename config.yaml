@@ -1,0 +1,15 @@
+# DockOps 配置文件
+# 运行方式: ./dockops -c config.yaml
+
+# HTTP 端口
+http_port: 8080
+
+# HTTPS 端口（需要同时配置 cert_path 和 key_path）
+https_port: 8443
+
+# TLS 证书路径（可选）
+# cert_path: /path/to/cert.pem
+# key_path:  /path/to/key.pem
+
+# 数据存储路径（SQLite 数据库、日志等）
+data_path: ./data
