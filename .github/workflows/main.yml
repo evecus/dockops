@@ -1,0 +1,111 @@
+name: Build & Release
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build DockOps
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: web/package-lock.json
+
+      - name: Build Frontend
+        working-directory: web
+        run: npm install && npm run build
+
+      - name: Download Go deps
+        run: go mod download
+
+      - name: Build linux/amd64
+        env:
+          GOOS: linux
+          GOARCH: amd64
+          CGO_ENABLED: 1
+        run: |
+          mkdir -p dist
+          go build -ldflags="-s -w -X main.Version=${{ github.ref_name }}" \
+            -o dist/dockops-linux-amd64 .
+
+      - name: Install arm64 cross-compiler
+        run: sudo apt-get update -qq && sudo apt-get install -y gcc-aarch64-linux-gnu
+
+      - name: Build linux/arm64
+        env:
+          GOOS: linux
+          GOARCH: arm64
+          CGO_ENABLED: 1
+          CC: aarch64-linux-gnu-gcc
+        run: |
+          go build -ldflags="-s -w -X main.Version=${{ github.ref_name }}" \
+            -o dist/dockops-linux-arm64 .
+
+      - name: Checksums
+        working-directory: dist
+        run: |
+          sha256sum dockops-linux-amd64 > dockops-linux-amd64.sha256
+          sha256sum dockops-linux-arm64 > dockops-linux-arm64.sha256
+
+      - name: Config example
+        run: |
+          cat > dist/config.yaml << 'EOF'
+          http_port: 8080
+          https_port: 8443
+          # cert_path: /path/to/cert.pem
+          # key_path: /path/to/key.pem
+          data_path: ./data
+          EOF
+
+      - name: Release
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          name: DockOps ${{ github.ref_name }}
+          body: |
+            ## DockOps ${{ github.ref_name }}
+
+            基于 Docker Compose 的现代化容器管理平台。
+
+            ### 快速开始
+
+            ```bash
+            # 下载二进制（以 amd64 为例）
+            wget https://github.com/dockops/dockops/releases/download/${{ github.ref_name }}/dockops-linux-amd64
+            chmod +x dockops-linux-amd64
+
+            # 创建配置文件
+            cat > config.yaml << 'CONF'
+            http_port: 8080
+            data_path: ./data
+            CONF
+
+            # 运行
+            ./dockops-linux-amd64 -c config.yaml
+            ```
+
+            访问 `http://your-server:8080`，首次启动创建管理员账号。
+
+            | 文件 | 平台 |
+            |------|------|
+            | `dockops-linux-amd64` | Linux x86_64 |
+            | `dockops-linux-arm64` | Linux ARM64 |
+          files: |
+            dist/dockops-linux-amd64
+            dist/dockops-linux-arm64
+            dist/dockops-linux-amd64.sha256
+            dist/dockops-linux-arm64.sha256
+            dist/config.yaml
