@@ -65,7 +65,7 @@
                   v-for="p in uniquePorts(ct.ports).slice(0, 4)"
                   :key="p.host_port"
                   @click.stop="openPort(p.host_port)"
-                  :title="`在浏览器中打开 ${location.hostname}:${p.host_port}`"
+                  :title="`点击访问 ${hostName}:${p.host_port}`"
                 >
                   {{ p.host_port }}→{{ p.container_port }}
                 </span>
@@ -232,8 +232,9 @@ function uniquePorts(ports) {
 }
 
 // 点击端口，用当前页面的 hostname 拼接跳转
+const hostName = window.location?.hostname ?? ''
 function openPort(hostPort) {
-  window.open(`http://${location.hostname}:${hostPort}`, '_blank')
+  window.open(`http://${hostName}:${hostPort}`, '_blank')
 }
 
 async function load() {
