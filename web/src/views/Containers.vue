@@ -55,13 +55,23 @@
             <span class="ct-info-key">目录</span>
             <span class="ct-info-val tag">{{ shortPath(ct.compose_dir) }}</span>
           </div>
-          <div class="ct-info-row" v-if="ct.ports?.length">
+          <!-- 端口行：始终占位保持卡片对齐 -->
+          <div class="ct-info-row">
             <span class="ct-info-key">端口</span>
             <div class="ct-ports">
-              <span class="tag" v-for="p in ct.ports.slice(0,3)" :key="p.host_port">
-                {{ p.host_port }}→{{ p.container_port }}
-              </span>
-              <span v-if="ct.ports.length > 3" class="sep">+{{ ct.ports.length-3 }}</span>
+              <template v-if="uniquePorts(ct.ports).length">
+                <span
+                  class="tag ct-port-tag"
+                  v-for="p in uniquePorts(ct.ports).slice(0, 4)"
+                  :key="p.host_port"
+                  @click.stop="openPort(p.host_port)"
+                  :title="`在浏览器中打开 ${location.hostname}:${p.host_port}`"
+                >
+                  {{ p.host_port }}→{{ p.container_port }}
+                </span>
+                <span v-if="uniquePorts(ct.ports).length > 4" class="sep">+{{ uniquePorts(ct.ports).length - 4 }}</span>
+              </template>
+              <span v-else class="ct-no-port">—</span>
             </div>
           </div>
         </div>
@@ -207,6 +217,23 @@ function shortPath(p) {
   if (!p) return '—'
   const parts = p.split('/')
   return parts.length > 3 ? '…/' + parts.slice(-2).join('/') : p
+}
+
+// 去重端口：相同 host_port 只保留一条（过滤 IPv4/IPv6 重复）
+function uniquePorts(ports) {
+  if (!ports?.length) return []
+  const seen = new Set()
+  return ports.filter(p => {
+    if (!p.host_port || p.host_port === '0') return false
+    if (seen.has(p.host_port)) return false
+    seen.add(p.host_port)
+    return true
+  })
+}
+
+// 点击端口，用当前页面的 hostname 拼接跳转
+function openPort(hostPort) {
+  window.open(`http://${location.hostname}:${hostPort}`, '_blank')
 }
 
 async function load() {
@@ -394,6 +421,19 @@ onMounted(load)
   color: var(--text-muted);
   font-family: var(--font-mono);
   white-space: nowrap;
+}
+.ct-port-tag {
+  cursor: pointer;
+  transition: all var(--transition);
+}
+.ct-port-tag:hover {
+  color: var(--accent-light);
+  background: var(--accent-dim);
+  border-color: var(--border-3);
+}
+.ct-no-port {
+  font-size: 12px;
+  color: var(--text-muted);
 }
 
 @media (max-width: 768px) {
