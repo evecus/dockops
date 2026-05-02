@@ -68,14 +68,18 @@ const form = ref({ username: '', password: '' })
 onMounted(async () => {
   try {
     const res = await api.systemStatus()
-    isSetup.value = !res.data?.setup
-    if (!isSetup.value && localStorage.getItem('token')) {
-      router.replace('/dashboard')
-      return
-    }
-    if (res.data?.setup === false) {
-      router.replace('/setup')
-      return
+    const setup = res.data?.setup  // true = 已初始化, false = 未初始化
+
+    if (!setup) {
+      // 系统未初始化，需要创建管理员账号
+      isSetup.value = true
+    } else {
+      // 系统已初始化，如果有 token 直接跳转 dashboard
+      isSetup.value = false
+      if (localStorage.getItem('token')) {
+        router.replace('/dashboard')
+        return
+      }
     }
   } catch {}
   checked.value = true
