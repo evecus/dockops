@@ -4,7 +4,7 @@
     <aside class="sidebar">
       <div class="sidebar-logo">
         <div class="logo-icon">
-          <Container :size="18" color="white" />
+          <img src="/apple-touch-icon.png" width="20" height="20" style="border-radius:4px;display:block;" alt="DockOps" />
         </div>
         <span class="logo-text">Dock<span>Ops</span></span>
       </div>
@@ -65,7 +65,7 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { RouterLink, RouterView, useRouter, useRoute } from 'vue-router'
-import { LayoutDashboard, Box, Image, Network, Settings, LogOut, Container, User } from 'lucide-vue-next'
+import { LayoutDashboard, Box, Image, Network, Settings, LogOut, User } from 'lucide-vue-next'
 import api from '@/api'
 
 const router = useRouter()

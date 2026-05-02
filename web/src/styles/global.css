@@ -123,11 +123,10 @@ input, textarea, select { font-family: var(--font-sans); outline: none; }
 }
 .logo-icon {
   width: 32px; height: 32px;
-  background: linear-gradient(135deg, var(--cyan-500), var(--cyan-700));
   border-radius: 8px;
   display: flex; align-items: center; justify-content: center;
-  box-shadow: 0 0 16px var(--accent-glow);
   flex-shrink: 0;
+  overflow: hidden;
 }
 .logo-icon svg { width: 18px; height: 18px; color: white; }
 .logo-text {

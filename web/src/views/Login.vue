@@ -8,7 +8,7 @@
     <div class="auth-card">
       <div class="auth-logo">
         <div class="logo-icon">
-          <Container :size="24" color="white" />
+          <img src="/apple-touch-icon.png" width="28" height="28" style="border-radius:6px;display:block;" alt="DockOps" />
         </div>
         <h1>Dock<span>Ops</span></h1>
       </div>
@@ -54,7 +54,7 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { Container, Eye, EyeOff, AlertCircle } from 'lucide-vue-next'
+import { Eye, EyeOff, AlertCircle } from 'lucide-vue-next'
 import api from '@/api'
 
 const router = useRouter()
