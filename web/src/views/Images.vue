@@ -11,7 +11,7 @@
       <div style="display:flex;gap:10px">
         <button class="btn btn-ghost" @click="load"><RefreshCw :size="14" /> 刷新</button>
         <button class="btn btn-ghost" @click="showLoad = true"><Upload :size="14" /> 导入镜像</button>
-        <button class="btn btn-primary" @click="showPull = true"><Download :size="14" /> 拉取镜像</button>
+        <button class="btn btn-primary" @click="showPull = true"><Download :size="14" /> 更新镜像</button>
       </div>
     </div>
 
@@ -49,7 +49,7 @@
         <div class="img-actions">
           <button class="btn btn-ghost btn-sm" style="flex:1;justify-content:center" @click="repull(img)" :disabled="pulling===img.id">
             <component :is="pulling===img.id ? RefreshCw : DownloadCloud" :size="13" :class="pulling===img.id?'spin':''"/>
-            重新拉取
+            更新
           </button>
           <button class="btn btn-danger btn-sm" style="flex:1;justify-content:center" @click="confirmDelete(img)">
             <Trash2 :size="13"/> 删除
@@ -63,7 +63,7 @@
       <div v-if="showPull" class="modal-overlay" @click.self="closePull">
         <div class="modal" style="max-width:500px">
           <div class="modal-header">
-            <div class="modal-title"><Download :size="16"/> 拉取镜像</div>
+            <div class="modal-title"><Download :size="16"/> 更新镜像</div>
             <button class="modal-close" @click="closePull"><X :size="15"/></button>
           </div>
           <div class="modal-body">
@@ -78,7 +78,7 @@
             <button class="btn btn-ghost" @click="closePull">{{ pullDone ? '关闭' : '取消' }}</button>
             <button v-if="!pullDone" class="btn btn-primary" @click="doPull" :disabled="pulling==='pull'||!pullRef.trim()">
               <div v-if="pulling==='pull'" class="spinner" style="width:13px;height:13px;border-width:2px"></div>
-              <Download v-else :size="14"/> 开始拉取
+              <Download v-else :size="14"/> 开始更新
             </button>
             <button v-else class="btn btn-success" @click="closePull"><CheckCircle :size="14"/> 完成</button>
           </div>
@@ -171,25 +171,25 @@ function fmtDate(ts){if(!ts)return'—';return new Date(ts*1000).toLocaleDateStr
 async function load(){loading.value=true;try{const r=await api.listImages();images.value=r.data||[]}catch{toast.error('加载镜像失败')}finally{loading.value=false}}
 async function doPull(){
   if(!pullRef.value.trim()||pulling.value==='pull')return
-  pulling.value='pull';pullLog.value=`拉取 ${pullRef.value}...\n`
+  pulling.value='pull';pullLog.value=`更新 ${pullRef.value}...\n`
   try{
     const resp=await fetch('/api/images/pull',{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${localStorage.getItem('token')}`},body:JSON.stringify({image:pullRef.value})})
     const reader=resp.body.getReader();const dec=new TextDecoder()
     while(true){const{done,value}=await reader.read();if(done)break
       dec.decode(value).split('\n').forEach(line=>{if(line.startsWith('data:')){const d=line.slice(5).trim();try{const o=JSON.parse(d);if(o.status)pullLog.value+=o.status+(o.progress?' '+o.progress:'')+'\n'}catch{if(d)pullLog.value+=d+'\n'}}})}
-    pullDone.value=true;pullLog.value+='\n✓ 拉取完成！';toast.success('镜像拉取成功');load()
-  }catch(e){pullLog.value+='\n✗ 拉取失败: '+e;toast.error('拉取失败')}finally{pulling.value=null}
+    pullDone.value=true;pullLog.value+='\n✓ 更新完成！';toast.success('镜像更新成功');load()
+  }catch(e){pullLog.value+='\n✗ 更新失败: '+e;toast.error('更新失败')}finally{pulling.value=null}
 }
 function closePull(){showPull.value=false;pullRef.value='';pullLog.value='';pullDone.value=false}
 async function repull(img){
-  const tag=img.repo_tags?.[0];if(!tag||tag==='<none>:<none>'){toast.error('无法重新拉取无标签镜像');return}
+  const tag=img.repo_tags?.[0];if(!tag||tag==='<none>:<none>'){toast.error('无法更新无标签镜像');return}
   pulling.value=img.id
   try{
     const resp=await fetch('/api/images/pull',{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${localStorage.getItem('token')}`},body:JSON.stringify({image:tag})})
     const reader=resp.body.getReader()
     while(true){const{done}=await reader.read();if(done)break}
-    toast.success('重新拉取完成');load()
-  }catch{toast.error('重新拉取失败')}finally{pulling.value=null}
+    toast.success('更新完成');load()
+  }catch{toast.error('更新失败')}finally{pulling.value=null}
 }
 function confirmDelete(img){deletingImg.value=img;forceDelete.value=false}
 async function doDelete(){
