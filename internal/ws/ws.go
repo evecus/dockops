@@ -27,7 +27,6 @@ type TerminalMessage struct {
 }
 
 func HandleTerminal(w http.ResponseWriter, r *http.Request, containerID string) {
-	// Validate token from query
 	token := r.URL.Query().Get("token")
 	if _, err := auth.ValidateToken(token); err != nil {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
@@ -83,7 +82,6 @@ func HandleTerminal(w http.ResponseWriter, r *http.Request, containerID string) 
 		}
 	}()
 
-	// Read WebSocket input and send to docker
 	conn.SetReadDeadline(time.Time{})
 	for {
 		select {
@@ -106,7 +104,6 @@ func HandleTerminal(w http.ResponseWriter, r *http.Request, containerID string) 
 				dockerClient.ResizeTTY(ctx, execID, tmsg.Rows, tmsg.Cols)
 			}
 		} else {
-			// raw input
 			resp.Conn.Write(msg)
 		}
 	}
@@ -143,7 +140,6 @@ func HandleLogs(w http.ResponseWriter, r *http.Request, containerID string) {
 	}
 	defer reader.Close()
 
-	// Handle client close
 	go func() {
 		for {
 			_, _, err := conn.ReadMessage()
@@ -164,8 +160,8 @@ func HandleLogs(w http.ResponseWriter, r *http.Request, containerID string) {
 
 		n, err := reader.Read(buf)
 		if n > 0 {
-			// Docker multiplexed stream: first 8 bytes are header
 			data := buf[:n]
+			// Strip docker multiplexed stream header (8 bytes)
 			if len(data) > 8 {
 				data = data[8:]
 			}
@@ -173,10 +169,7 @@ func HandleLogs(w http.ResponseWriter, r *http.Request, containerID string) {
 				return
 			}
 		}
-		if err == io.EOF {
-			return
-		}
-		if err != nil {
+		if err == io.EOF || err != nil {
 			return
 		}
 	}
