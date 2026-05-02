@@ -37,20 +37,16 @@ jobs:
         env:
           GOOS: linux
           GOARCH: amd64
-          CGO_ENABLED: 1
+          CGO_ENABLED: 0
         run: |
           mkdir -p dist
           go build -ldflags="-s -w" -o dist/dockops-linux-amd64 .
-
-      - name: Install arm64 cross-compiler
-        run: sudo apt-get update -qq && sudo apt-get install -y gcc-aarch64-linux-gnu
-
+  
       - name: Build linux/arm64
         env:
           GOOS: linux
           GOARCH: arm64
-          CGO_ENABLED: 1
-          CC: aarch64-linux-gnu-gcc
+          CGO_ENABLED: 0
         run: |
           go build -ldflags="-s -w" -o dist/dockops-linux-arm64 .
 
