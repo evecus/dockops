@@ -338,65 +338,63 @@ type FileEntry struct {
 }
 
 func (c *Client) ListContainerFiles(ctx context.Context, id, path string) ([]FileEntry, error) {
-	// Use "ls -la --time-style=+%s" via exec to reliably list directory contents.
-	// CopyFromContainer on "/" tries to stream the whole FS and returns nothing useful.
-	execID, err := c.cli.ContainerExecCreate(ctx, id, types.ExecConfig{
-		Cmd:          []string{"ls", "-la", "--time-style=+%s", path},
-		AttachStdout: true,
-		AttachStderr: true,
-	})
-	if err != nil {
-		// Fallback: try busybox-style ls (no --time-style)
-		execID, err = c.cli.ContainerExecCreate(ctx, id, types.ExecConfig{
-			Cmd:          []string{"ls", "-la", path},
+	// runExec runs a command in the container and returns stdout as string.
+	runExec := func(cmd []string) (string, error) {
+		execID, err := c.cli.ContainerExecCreate(ctx, id, types.ExecConfig{
+			Cmd:          cmd,
 			AttachStdout: true,
-			AttachStderr: true,
+			AttachStderr: false,
 		})
 		if err != nil {
-			return nil, err
+			return "", err
 		}
-	}
-
-	resp, err := c.cli.ContainerExecAttach(ctx, execID.ID, types.ExecStartCheck{})
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Close()
-
-	var buf strings.Builder
-	// Docker multiplexed stream: 8-byte header per frame
-	header := make([]byte, 8)
-	for {
-		_, err := io.ReadFull(resp.Reader, header)
+		resp, err := c.cli.ContainerExecAttach(ctx, execID.ID, types.ExecStartCheck{})
 		if err != nil {
-			break
+			return "", err
 		}
-		size := int(header[4])<<24 | int(header[5])<<16 | int(header[6])<<8 | int(header[7])
-		if size == 0 {
-			continue
+		defer resp.Close()
+		var buf strings.Builder
+		header := make([]byte, 8)
+		for {
+			_, err := io.ReadFull(resp.Reader, header)
+			if err != nil {
+				break
+			}
+			size := int(header[4])<<24 | int(header[5])<<16 | int(header[6])<<8 | int(header[7])
+			if size == 0 {
+				continue
+			}
+			payload := make([]byte, size)
+			if _, err = io.ReadFull(resp.Reader, payload); err != nil {
+				break
+			}
+			buf.Write(payload)
 		}
-		payload := make([]byte, size)
-		_, err = io.ReadFull(resp.Reader, payload)
-		if err != nil {
-			break
-		}
-		buf.Write(payload)
+		return buf.String(), nil
 	}
 
-	output := buf.String()
+	// Strategy 1: GNU ls with unix timestamp (most reliable)
+	output, err := runExec([]string{"ls", "-la", "--time-style=+%s", path})
+	gnuFormat := err == nil && looksLikeGnuLs(output)
+
+	if !gnuFormat {
+		// Strategy 2: stat each entry individually via find+stat (works on BusyBox)
+		entries, err2 := c.listFilesViaStat(ctx, id, path, runExec)
+		if err2 == nil {
+			return entries, nil
+		}
+		// Strategy 3: fall back to plain ls -la and best-effort parsing
+		output, _ = runExec([]string{"ls", "-la", path})
+	}
+
 	var entries []FileEntry
-
 	for _, line := range strings.Split(output, "\n") {
 		line = strings.TrimSpace(line)
-		// Skip "total N", empty lines, and "." ".." entries
 		if line == "" || strings.HasPrefix(line, "total ") {
 			continue
 		}
-		entry := parseLsLine(line, path)
-		if entry == nil {
-			continue
-		}
-		if entry.Name == "." || entry.Name == ".." {
+		entry := parseLsLine(line, path, gnuFormat)
+		if entry == nil || entry.Name == "." || entry.Name == ".." {
 			continue
 		}
 		entries = append(entries, *entry)
@@ -404,54 +402,115 @@ func (c *Client) ListContainerFiles(ctx context.Context, id, path string) ([]Fil
 	return entries, nil
 }
 
+// looksLikeGnuLs checks if ls output looks like GNU format (has unix timestamp field).
+func looksLikeGnuLs(output string) bool {
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "total ") {
+			continue
+		}
+		fields := strings.Fields(line)
+		// GNU: perms links owner group size timestamp name -> 7+ fields, fields[5] is a number
+		if len(fields) >= 7 {
+			var ts int64
+			if _, err := fmt.Sscanf(fields[5], "%d", &ts); err == nil && ts > 0 {
+				return true
+			}
+		}
+		return false
+	}
+	return false
+}
+
+// listFilesViaStat uses find+stat for BusyBox containers (more reliable than ls parsing).
+func (c *Client) listFilesViaStat(ctx context.Context, id, path string, runExec func([]string) (string, error)) ([]FileEntry, error) {
+	// Use find -maxdepth 1 to list entries, then stat each one
+	// BusyBox stat format: %n\t%s\t%f\t%Y\t%F
+	script := fmt.Sprintf(
+		`find "%s" -maxdepth 1 -mindepth 1 -exec stat -c '%%n\t%%s\t%%A\t%%Y\t%%F' {} \; 2>/dev/null`,
+		path,
+	)
+	output, err := runExec([]string{"sh", "-c", script})
+	if err != nil || strings.TrimSpace(output) == "" {
+		return nil, fmt.Errorf("stat failed")
+	}
+
+	var entries []FileEntry
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		parts := strings.Split(line, "\t")
+		if len(parts) < 5 {
+			continue
+		}
+		fullPath := parts[0]
+		name := filepath.Base(fullPath)
+		if name == "." || name == ".." {
+			continue
+		}
+		var size int64
+		fmt.Sscanf(parts[1], "%d", &size)
+		mode := parts[2]
+		var modTime int64
+		fmt.Sscanf(parts[3], "%d", &modTime)
+		isDir := parts[4] == "directory"
+
+		entries = append(entries, FileEntry{
+			Name:    name,
+			Path:    fullPath,
+			Size:    size,
+			Mode:    mode,
+			ModTime: modTime,
+			IsDir:   isDir,
+		})
+	}
+	if len(entries) == 0 {
+		return nil, fmt.Errorf("no entries")
+	}
+	return entries, nil
+}
+
 // parseLsLine parses a line from "ls -la" output.
-// Handles both GNU ls (with --time-style=+%s giving unix ts) and busybox ls.
-func parseLsLine(line, dirPath string) *FileEntry {
-	// Fields: permissions links owner group size [date/time...] name
+// gnuFormat=true means fields[5] is a unix timestamp; false means busybox date fields.
+func parseLsLine(line, dirPath string, gnuFormat bool) *FileEntry {
 	fields := strings.Fields(line)
+
+	// Must start with permission string like -rwxr-xr-x or drwxr-xr-x
 	if len(fields) < 5 {
 		return nil
 	}
-
 	perms := fields[0]
-	isDir := len(perms) > 0 && perms[0] == 'd'
-	isLink := len(perms) > 0 && perms[0] == 'l'
-	_ = isLink
-
-	// Try to find size and name
-	// GNU ls -la --time-style=+%s: perms links owner group size timestamp name
-	// That's fields[0..6], name at fields[6]
-	// busybox ls -la: perms links owner group size month day time name
-	// That's fields[0..8], name at fields[8]
+	if len(perms) < 1 || !strings.ContainsAny(string(perms[0]), "-dlcbsp") {
+		return nil
+	}
+	isDir := perms[0] == 'd'
 
 	var size int64
 	var modTime int64
 	var name string
 
-	if len(fields) >= 7 {
-		// Try GNU format: fields[4]=size, fields[5]=unix_timestamp, fields[6]=name
-		fmt.Sscanf(fields[4], "%d", &size)
-		ts, err := parseTimestamp(fields[5])
-		if err == nil {
-			modTime = ts
-			// Name: rejoin from fields[6] onward (handles spaces), strip symlink " -> target"
-			name = strings.Join(fields[6:], " ")
-		} else if len(fields) >= 9 {
-			// Busybox: fields[4]=size, fields[5-7]=date, fields[8]=name
-			name = strings.Join(fields[8:], " ")
-			// Try to parse date: "Jan  2 15:04" or "Jan  2  2024"
-			dateStr := strings.Join(fields[5:8], " ")
-			if t, err2 := time.Parse("Jan  2 2006", dateStr); err2 == nil {
-				modTime = t.Unix()
-			} else if t, err2 := time.Parse("Jan 2 2006", dateStr); err2 == nil {
-				modTime = t.Unix()
-			}
-		} else {
-			name = strings.Join(fields[6:], " ")
-		}
-	}
+	fmt.Sscanf(fields[4], "%d", &size)
 
-	if name == "" {
+	if gnuFormat && len(fields) >= 7 {
+		// GNU: perms links owner group size unix_ts name...
+		fmt.Sscanf(fields[5], "%d", &modTime)
+		name = strings.Join(fields[6:], " ")
+	} else if !gnuFormat && len(fields) >= 9 {
+		// BusyBox: perms links owner group size Mon DD HH:MM name...
+		//          perms links owner group size Mon DD  YYYY  name...
+		name = strings.Join(fields[8:], " ")
+		dateStr := fields[5] + " " + fields[6] + " " + fields[7]
+		for _, layout := range []string{"Jan 2 15:04", "Jan  2 15:04", "Jan 2 2006", "Jan  2 2006"} {
+			if t, err := time.Parse(layout, dateStr); err == nil {
+				modTime = t.Unix()
+				break
+			}
+		}
+	} else if len(fields) >= 7 {
+		name = strings.Join(fields[6:], " ")
+	} else {
 		return nil
 	}
 
@@ -464,11 +523,9 @@ func parseLsLine(line, dirPath string) *FileEntry {
 		return nil
 	}
 
-	entryPath := filepath.Join(dirPath, name)
-
 	return &FileEntry{
 		Name:    name,
-		Path:    entryPath,
+		Path:    filepath.Join(dirPath, name),
 		Size:    size,
 		Mode:    perms,
 		ModTime: modTime,
@@ -476,14 +533,6 @@ func parseLsLine(line, dirPath string) *FileEntry {
 	}
 }
 
-func parseTimestamp(s string) (int64, error) {
-	var ts int64
-	_, err := fmt.Sscanf(s, "%d", &ts)
-	if err != nil || ts <= 0 {
-		return 0, fmt.Errorf("not a unix timestamp")
-	}
-	return ts, nil
-}
 
 func (c *Client) DownloadContainerFile(ctx context.Context, id, path string) (io.ReadCloser, error) {
 	content, _, err := c.cli.CopyFromContainer(ctx, id, path)
