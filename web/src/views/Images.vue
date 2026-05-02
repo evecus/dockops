@@ -49,7 +49,7 @@
         <div class="img-actions">
           <button class="btn btn-ghost btn-sm" style="flex:1;justify-content:center" @click="repull(img)" :disabled="pulling===img.id">
             <component :is="pulling===img.id ? RefreshCw : DownloadCloud" :size="13" :class="pulling===img.id?'spin':''"/>
-            重新拉取
+            更新
           </button>
           <button class="btn btn-danger btn-sm" style="flex:1;justify-content:center" @click="confirmDelete(img)">
             <Trash2 :size="13"/> 删除
@@ -182,14 +182,14 @@ async function doPull(){
 }
 function closePull(){showPull.value=false;pullRef.value='';pullLog.value='';pullDone.value=false}
 async function repull(img){
-  const tag=img.repo_tags?.[0];if(!tag||tag==='<none>:<none>'){toast.error('无法重新拉取无标签镜像');return}
+  const tag=img.repo_tags?.[0];if(!tag||tag==='<none>:<none>'){toast.error('无法更新无标签镜像');return}
   pulling.value=img.id
   try{
     const resp=await fetch('/api/images/pull',{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${localStorage.getItem('token')}`},body:JSON.stringify({image:tag})})
     const reader=resp.body.getReader()
     while(true){const{done}=await reader.read();if(done)break}
-    toast.success('重新拉取完成');load()
-  }catch{toast.error('重新拉取失败')}finally{pulling.value=null}
+    toast.success('更新成功');load()
+  }catch{toast.error('更新失败')}finally{pulling.value=null}
 }
 function confirmDelete(img){deletingImg.value=img;forceDelete.value=false}
 async function doDelete(){
