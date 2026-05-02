@@ -68,29 +68,29 @@
 
         <!-- Actions -->
         <div class="ct-actions" @click.stop>
-          <button class="btn btn-icon" v-if="ct.docker_state !== 'running'" @click="start(ct)" data-tip="启动">
-            <Play :size="13" />
+          <button class="ct-action-btn" v-if="ct.docker_state !== 'running'" @click="start(ct)">
+            <Play :size="13" /><span>启动</span>
           </button>
-          <button class="btn btn-icon" v-else @click="stop(ct)" data-tip="停止">
-            <Square :size="13" />
+          <button class="ct-action-btn" v-else @click="stop(ct)">
+            <Square :size="13" /><span>停止</span>
           </button>
-          <button class="btn btn-icon" @click="restart(ct)" data-tip="重启">
-            <RotateCcw :size="13" />
+          <button class="ct-action-btn" @click="restart(ct)">
+            <RotateCcw :size="13" /><span>重启</span>
           </button>
-          <button class="btn btn-icon" @click="openTerminal(ct)" data-tip="终端">
-            <Terminal :size="13" />
+          <button class="ct-action-btn" @click="openTerminal(ct)">
+            <Terminal :size="13" /><span>终端</span>
           </button>
-          <button class="btn btn-icon" @click="openLogs(ct)" data-tip="日志">
-            <ScrollText :size="13" />
+          <button class="ct-action-btn" @click="openLogs(ct)">
+            <ScrollText :size="13" /><span>日志</span>
           </button>
-          <button class="btn btn-icon" @click="openFiles(ct)" data-tip="文件">
-            <FolderOpen :size="13" />
+          <button class="ct-action-btn" @click="openFiles(ct)">
+            <FolderOpen :size="13" /><span>文件</span>
           </button>
-          <button class="btn btn-icon" @click="editContainer(ct)" data-tip="编辑">
-            <Pencil :size="13" />
+          <button class="ct-action-btn" @click="editContainer(ct)">
+            <Pencil :size="13" /><span>编辑</span>
           </button>
-          <button class="btn btn-icon btn-danger-icon" @click="confirmDelete(ct)" data-tip="删除">
-            <Trash2 :size="13" />
+          <button class="ct-action-btn ct-action-danger" @click="confirmDelete(ct)">
+            <Trash2 :size="13" /><span>删除</span>
           </button>
         </div>
       </div>
@@ -357,13 +357,38 @@ onMounted(load)
 
 .ct-actions {
   display: flex;
-  gap: 4px;
   flex-wrap: wrap;
+  gap: 5px;
   padding-top: 8px;
   border-top: 1px solid var(--border);
 }
-.btn-danger-icon { color: var(--red) !important; }
-.btn-danger-icon:hover { background: rgba(240,84,100,0.1) !important; border-color: rgba(240,84,100,0.25) !important; }
+.ct-action-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 6px 8px;
+  border-radius: var(--radius);
+  font-size: 10.5px;
+  font-weight: 500;
+  color: var(--text-muted);
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  cursor: pointer;
+  transition: all var(--transition);
+  min-width: 44px;
+}
+.ct-action-btn:hover {
+  color: var(--accent-light);
+  background: var(--accent-dim);
+  border-color: var(--border-2);
+}
+.ct-action-danger { }
+.ct-action-danger:hover {
+  color: var(--red) !important;
+  background: rgba(240,84,100,0.08) !important;
+  border-color: rgba(240,84,100,0.2) !important;
+}
 .ct-status-text {
   font-size: 11px;
   color: var(--text-muted);
