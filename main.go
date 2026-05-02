@@ -11,7 +11,7 @@ import (
 	"github.com/dockops/dockops/internal/scheduler"
 )
 
-//go:embed web/dist
+//go:embed all:web/dist
 var webFS embed.FS
 
 func main() {
