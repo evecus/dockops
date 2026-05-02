@@ -1,1 +1,0 @@
-import o from"./Login-DYixtpz8.js";import{c as r,o as t}from"./index-CL-yX5Y7.js";import"./_plugin-vue_export-helper-BoJlEbyD.js";import"./container-BwZTyJ6V.js";import"./eye-DKVjhu0H.js";const s={__name:"Setup",setup(e){return(p,c)=>(t(),r(o))}};export{s as default};
