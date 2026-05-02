@@ -1,7 +1,6 @@
 package docker
 
 import (
-	"archive/tar"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -339,35 +338,151 @@ type FileEntry struct {
 }
 
 func (c *Client) ListContainerFiles(ctx context.Context, id, path string) ([]FileEntry, error) {
-	content, _, err := c.cli.CopyFromContainer(ctx, id, path)
+	// Use "ls -la --time-style=+%s" via exec to reliably list directory contents.
+	// CopyFromContainer on "/" tries to stream the whole FS and returns nothing useful.
+	execID, err := c.cli.ContainerExecCreate(ctx, id, types.ExecConfig{
+		Cmd:          []string{"ls", "-la", "--time-style=+%s", path},
+		AttachStdout: true,
+		AttachStderr: true,
+	})
 	if err != nil {
-		return nil, err
-	}
-	defer content.Close()
-	var entries []FileEntry
-	tr := tar.NewReader(content)
-	for {
-		hdr, err := tr.Next()
-		if err == io.EOF {
-			break
-		}
+		// Fallback: try busybox-style ls (no --time-style)
+		execID, err = c.cli.ContainerExecCreate(ctx, id, types.ExecConfig{
+			Cmd:          []string{"ls", "-la", path},
+			AttachStdout: true,
+			AttachStderr: true,
+		})
 		if err != nil {
 			return nil, err
 		}
-		name := filepath.Base(hdr.Name)
-		if name == "." || name == "" {
+	}
+
+	resp, err := c.cli.ContainerExecAttach(ctx, execID.ID, types.ExecStartCheck{})
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Close()
+
+	var buf strings.Builder
+	// Docker multiplexed stream: 8-byte header per frame
+	header := make([]byte, 8)
+	for {
+		_, err := io.ReadFull(resp.Reader, header)
+		if err != nil {
+			break
+		}
+		size := int(header[4])<<24 | int(header[5])<<16 | int(header[6])<<8 | int(header[7])
+		if size == 0 {
 			continue
 		}
-		entries = append(entries, FileEntry{
-			Name:    name,
-			Path:    filepath.Join(path, name),
-			Size:    hdr.Size,
-			Mode:    hdr.FileInfo().Mode().String(),
-			ModTime: hdr.ModTime.Unix(),
-			IsDir:   hdr.Typeflag == tar.TypeDir,
-		})
+		payload := make([]byte, size)
+		_, err = io.ReadFull(resp.Reader, payload)
+		if err != nil {
+			break
+		}
+		buf.Write(payload)
+	}
+
+	output := buf.String()
+	var entries []FileEntry
+
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		// Skip "total N", empty lines, and "." ".." entries
+		if line == "" || strings.HasPrefix(line, "total ") {
+			continue
+		}
+		entry := parseLsLine(line, path)
+		if entry == nil {
+			continue
+		}
+		if entry.Name == "." || entry.Name == ".." {
+			continue
+		}
+		entries = append(entries, *entry)
 	}
 	return entries, nil
+}
+
+// parseLsLine parses a line from "ls -la" output.
+// Handles both GNU ls (with --time-style=+%s giving unix ts) and busybox ls.
+func parseLsLine(line, dirPath string) *FileEntry {
+	// Fields: permissions links owner group size [date/time...] name
+	fields := strings.Fields(line)
+	if len(fields) < 5 {
+		return nil
+	}
+
+	perms := fields[0]
+	isDir := len(perms) > 0 && perms[0] == 'd'
+	isLink := len(perms) > 0 && perms[0] == 'l'
+	_ = isLink
+
+	// Try to find size and name
+	// GNU ls -la --time-style=+%s: perms links owner group size timestamp name
+	// That's fields[0..6], name at fields[6]
+	// busybox ls -la: perms links owner group size month day time name
+	// That's fields[0..8], name at fields[8]
+
+	var size int64
+	var modTime int64
+	var name string
+
+	if len(fields) >= 7 {
+		// Try GNU format: fields[4]=size, fields[5]=unix_timestamp, fields[6]=name
+		fmt.Sscanf(fields[4], "%d", &size)
+		ts, err := parseTimestamp(fields[5])
+		if err == nil {
+			modTime = ts
+			// Name: rejoin from fields[6] onward (handles spaces), strip symlink " -> target"
+			name = strings.Join(fields[6:], " ")
+		} else if len(fields) >= 9 {
+			// Busybox: fields[4]=size, fields[5-7]=date, fields[8]=name
+			name = strings.Join(fields[8:], " ")
+			// Try to parse date: "Jan  2 15:04" or "Jan  2  2024"
+			dateStr := strings.Join(fields[5:8], " ")
+			if t, err2 := time.Parse("Jan  2 2006", dateStr); err2 == nil {
+				modTime = t.Unix()
+			} else if t, err2 := time.Parse("Jan 2 2006", dateStr); err2 == nil {
+				modTime = t.Unix()
+			}
+		} else {
+			name = strings.Join(fields[6:], " ")
+		}
+	}
+
+	if name == "" {
+		return nil
+	}
+
+	// Strip symlink arrow
+	if idx := strings.Index(name, " -> "); idx != -1 {
+		name = name[:idx]
+	}
+	name = strings.TrimSpace(name)
+	if name == "" || name == "." || name == ".." {
+		return nil
+	}
+
+	entryPath := filepath.Join(dirPath, name)
+
+	return &FileEntry{
+		Name:    name,
+		Path:    entryPath,
+		Size:    size,
+		Mode:    perms,
+		ModTime: modTime,
+		IsDir:   isDir,
+	}
+}
+
+func parseTimestamp(s string) (int64, error) {
+	var ts int64
+	_, err := fmt.Sscanf(s, "%d", &ts)
+	if err != nil || ts <= 0 {
+		return 0, fmt.Errorf("not a unix timestamp")
+	}
+	return ts, nil
 }
 
 func (c *Client) DownloadContainerFile(ctx context.Context, id, path string) (io.ReadCloser, error) {
