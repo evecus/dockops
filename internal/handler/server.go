@@ -63,6 +63,7 @@ func (s *Server) Run() error {
 		{
 			auth.GET("/dashboard/info", s.dashboardInfo)
 			auth.GET("/dashboard/stats", s.dashboardStats)
+			auth.POST("/dashboard/refresh", s.dashboardRefresh)
 
 			// Containers
 			auth.GET("/containers", s.listContainers)
@@ -216,22 +217,75 @@ func (s *Server) login(c *gin.Context) {
 // ===== DASHBOARD =====
 
 func (s *Server) dashboardInfo(c *gin.Context) {
-	client, err := docker.NewClient()
-	if err != nil {
-		fail(c, 500, err.Error())
-		return
-	}
-	defer client.Close()
-
-	info, err := client.GetSystemInfo(context.Background())
-	if err != nil {
-		fail(c, 500, err.Error())
+	info, _, _ := s.sched.Cache.Get()
+	if info == nil {
+		// Cache miss: collect synchronously
+		client, err := docker.NewClient()
+		if err != nil {
+			fail(c, 500, err.Error())
+			return
+		}
+		defer client.Close()
+		i, err := client.GetSystemInfo(context.Background())
+		if err != nil {
+			fail(c, 500, err.Error())
+			return
+		}
+		ok(c, i)
 		return
 	}
 	ok(c, info)
 }
 
 func (s *Server) dashboardStats(c *gin.Context) {
+	_, stats, _ := s.sched.Cache.Get()
+	if stats == nil {
+		// Cache miss: collect synchronously
+		client, err := docker.NewClient()
+		if err != nil {
+			fail(c, 500, err.Error())
+			return
+		}
+		defer client.Close()
+		containers, err := client.ListContainers(context.Background())
+		if err != nil {
+			fail(c, 500, err.Error())
+			return
+		}
+		var totalCPU float64
+		var totalMem, totalMemLimit uint64
+		for _, ct := range containers {
+			if ct.State == "running" {
+				st, err := client.GetContainerStats(context.Background(), ct.ID)
+				if err == nil {
+					totalCPU += st.CPUPercent
+					totalMem += st.MemoryUsage
+					totalMemLimit += st.MemoryLimit
+				}
+			}
+		}
+		ok(c, gin.H{
+			"total_cpu_percent": totalCPU,
+			"total_mem_usage":   totalMem,
+			"total_mem_limit":   totalMemLimit,
+			"containers":        len(containers),
+		})
+		return
+	}
+	ok(c, stats)
+}
+
+// dashboardRefresh triggers an immediate collect and waits for it, then returns fresh data.
+func (s *Server) dashboardRefresh(c *gin.Context) {
+	done := make(chan struct{})
+	go func() {
+		s.sched.CollectNow()
+		// Small delay to let goroutine start and write
+		time.Sleep(100 * time.Millisecond)
+		close(done)
+	}()
+	// Wait up to 30s for the collection to actually complete
+	// We do a proper blocking collect here for immediate feedback
 	client, err := docker.NewClient()
 	if err != nil {
 		fail(c, 500, err.Error())
@@ -239,32 +293,40 @@ func (s *Server) dashboardStats(c *gin.Context) {
 	}
 	defer client.Close()
 
-	containers, err := client.ListContainers(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	info, err := client.GetSystemInfo(ctx)
 	if err != nil {
 		fail(c, 500, err.Error())
 		return
 	}
-
+	containers, err := client.ListContainers(ctx)
+	if err != nil {
+		fail(c, 500, err.Error())
+		return
+	}
 	var totalCPU float64
 	var totalMem, totalMemLimit uint64
-
 	for _, ct := range containers {
 		if ct.State == "running" {
-			stats, err := client.GetContainerStats(context.Background(), ct.ID)
+			st, err := client.GetContainerStats(ctx, ct.ID)
 			if err == nil {
-				totalCPU += stats.CPUPercent
-				totalMem += stats.MemoryUsage
-				totalMemLimit += stats.MemoryLimit
+				totalCPU += st.CPUPercent
+				totalMem += st.MemoryUsage
+				totalMemLimit += st.MemoryLimit
 			}
 		}
 	}
-
-	ok(c, gin.H{
+	statsData := gin.H{
 		"total_cpu_percent": totalCPU,
 		"total_mem_usage":   totalMem,
 		"total_mem_limit":   totalMemLimit,
 		"containers":        len(containers),
-	})
+	}
+	s.sched.Cache.Set(info, statsData)
+	<-done
+	ok(c, gin.H{"info": info, "stats": statsData})
 }
 
 // ===== CONTAINERS =====
@@ -1070,6 +1132,7 @@ func (s *Server) updateSettings(c *gin.Context) {
 	allowedKeys := map[string]bool{
 		"update_check_interval": true,
 		"docker_proxy":          true,
+		"collect_interval":      true,
 	}
 
 	for k, v := range req {
@@ -1082,6 +1145,9 @@ func (s *Server) updateSettings(c *gin.Context) {
 		}
 		if k == "update_check_interval" {
 			s.sched.UpdateInterval(v)
+		}
+		if k == "collect_interval" {
+			s.sched.UpdateCollectInterval(v)
 		}
 	}
 	ok(c, gin.H{"message": "settings updated"})

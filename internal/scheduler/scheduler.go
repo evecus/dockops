@@ -3,6 +3,7 @@ package scheduler
 import (
 	"context"
 	"log"
+	"sync"
 	"time"
 
 	"github.com/dockops/dockops/internal/compose"
@@ -11,11 +12,35 @@ import (
 	"github.com/robfig/cron/v3"
 )
 
+// DashboardCache holds the latest collected dashboard data.
+type DashboardCache struct {
+	Info      interface{}
+	Stats     interface{}
+	UpdatedAt time.Time
+	mu        sync.RWMutex
+}
+
+func (c *DashboardCache) Set(info, stats interface{}) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.Info = info
+	c.Stats = stats
+	c.UpdatedAt = time.Now()
+}
+
+func (c *DashboardCache) Get() (info, stats interface{}, updatedAt time.Time) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.Info, c.Stats, c.UpdatedAt
+}
+
 type Scheduler struct {
-	db       *db.DB
-	dataPath string
-	cron     *cron.Cron
-	entryID  cron.EntryID
+	db             *db.DB
+	dataPath       string
+	cron           *cron.Cron
+	updateEntryID  cron.EntryID
+	collectEntryID cron.EntryID
+	Cache          *DashboardCache
 }
 
 func New(database *db.DB, dataPath string) *Scheduler {
@@ -23,16 +48,29 @@ func New(database *db.DB, dataPath string) *Scheduler {
 		db:       database,
 		dataPath: dataPath,
 		cron:     cron.New(),
+		Cache:    &DashboardCache{},
 	}
 }
 
 func (s *Scheduler) Start() {
-	interval, err := s.db.GetSetting("update_check_interval")
-	if err != nil || interval == "" {
-		interval = "6h"
+	updateInterval, err := s.db.GetSetting("update_check_interval")
+	if err != nil || updateInterval == "" {
+		updateInterval = "6h"
 	}
-	s.scheduleCheck(interval)
+	if updateInterval != "off" {
+		s.scheduleUpdateCheck(updateInterval)
+	}
+
+	collectInterval, err := s.db.GetSetting("collect_interval")
+	if err != nil || collectInterval == "" {
+		collectInterval = "10m"
+	}
+	if collectInterval != "off" {
+		s.scheduleCollect(collectInterval)
+	}
+
 	s.cron.Start()
+	go s.collectDashboard()
 }
 
 func (s *Scheduler) Stop() {
@@ -43,27 +81,103 @@ func (s *Scheduler) UpdateInterval(interval string) error {
 	if err := s.db.SetSetting("update_check_interval", interval); err != nil {
 		return err
 	}
-	if s.entryID != 0 {
-		s.cron.Remove(s.entryID)
+	if s.updateEntryID != 0 {
+		s.cron.Remove(s.updateEntryID)
+		s.updateEntryID = 0
 	}
-	s.scheduleCheck(interval)
+	if interval != "off" {
+		s.scheduleUpdateCheck(interval)
+	}
 	return nil
 }
 
-func (s *Scheduler) scheduleCheck(interval string) {
-	spec := durationToSpec(interval)
-	id, err := s.cron.AddFunc(spec, func() {
-		s.checkUpdates()
-	})
+func (s *Scheduler) UpdateCollectInterval(interval string) error {
+	if err := s.db.SetSetting("collect_interval", interval); err != nil {
+		return err
+	}
+	if s.collectEntryID != 0 {
+		s.cron.Remove(s.collectEntryID)
+		s.collectEntryID = 0
+	}
+	if interval != "off" {
+		s.scheduleCollect(interval)
+	}
+	return nil
+}
+
+func (s *Scheduler) scheduleUpdateCheck(interval string) {
+	spec := updateIntervalToSpec(interval)
+	id, err := s.cron.AddFunc(spec, func() { s.checkUpdates() })
 	if err != nil {
 		log.Printf("Failed to schedule update check: %v", err)
 		return
 	}
-	s.entryID = id
+	s.updateEntryID = id
+}
+
+func (s *Scheduler) scheduleCollect(interval string) {
+	spec := collectIntervalToSpec(interval)
+	id, err := s.cron.AddFunc(spec, func() { s.collectDashboard() })
+	if err != nil {
+		log.Printf("Failed to schedule dashboard collect: %v", err)
+		return
+	}
+	s.collectEntryID = id
 }
 
 func (s *Scheduler) CheckNow() {
 	go s.checkUpdates()
+}
+
+func (s *Scheduler) CollectNow() {
+	go s.collectDashboard()
+}
+
+func (s *Scheduler) collectDashboard() {
+	client, err := docker.NewClient()
+	if err != nil {
+		log.Printf("Dashboard collect: docker client error: %v", err)
+		return
+	}
+	defer client.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	info, err := client.GetSystemInfo(ctx)
+	if err != nil {
+		log.Printf("Dashboard collect: get system info error: %v", err)
+		return
+	}
+
+	containers, err := client.ListContainers(ctx)
+	if err != nil {
+		log.Printf("Dashboard collect: list containers error: %v", err)
+		return
+	}
+
+	var totalCPU float64
+	var totalMem, totalMemLimit uint64
+	for _, ct := range containers {
+		if ct.State == "running" {
+			stats, err := client.GetContainerStats(ctx, ct.ID)
+			if err == nil {
+				totalCPU += stats.CPUPercent
+				totalMem += stats.MemoryUsage
+				totalMemLimit += stats.MemoryLimit
+			}
+		}
+	}
+
+	statsData := map[string]interface{}{
+		"total_cpu_percent": totalCPU,
+		"total_mem_usage":   totalMem,
+		"total_mem_limit":   totalMemLimit,
+		"containers":        len(containers),
+	}
+
+	s.Cache.Set(info, statsData)
+	log.Println("Dashboard data collected and cached")
 }
 
 func (s *Scheduler) checkUpdates() {
@@ -92,13 +206,10 @@ func (s *Scheduler) checkUpdates() {
 			if err != nil {
 				continue
 			}
-
 			reader, err := dockerClient.StreamPullImage(ctx, img)
 			if err != nil {
 				continue
 			}
-
-			// consume pull output
 			buf := make([]byte, 4096)
 			for {
 				_, err := reader.Read(buf)
@@ -107,19 +218,17 @@ func (s *Scheduler) checkUpdates() {
 				}
 			}
 			reader.Close()
-
 			remoteID, err := dockerClient.GetImageID(ctx, img)
 			if err != nil {
 				continue
 			}
-
 			mgr.SetUpdateAvailable(ct.ID, remoteID != localID)
 		}
 	}
 	log.Println("Update check complete")
 }
 
-func durationToSpec(d string) string {
+func updateIntervalToSpec(d string) string {
 	switch d {
 	case "1h":
 		return "0 * * * *"
@@ -131,5 +240,20 @@ func durationToSpec(d string) string {
 		return "0 0 * * *"
 	default:
 		return "0 */6 * * *"
+	}
+}
+
+func collectIntervalToSpec(d string) string {
+	switch d {
+	case "1m":
+		return "* * * * *"
+	case "5m":
+		return "*/5 * * * *"
+	case "10m":
+		return "*/10 * * * *"
+	case "30m":
+		return "*/30 * * * *"
+	default:
+		return "*/10 * * * *"
 	}
 }

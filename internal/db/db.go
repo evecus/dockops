@@ -67,6 +67,7 @@ func (d *DB) migrate() error {
 	defaults := map[string]string{
 		"update_check_interval": "6h",
 		"docker_proxy":          "",
+		"collect_interval":      "10m",
 	}
 	for k, v := range defaults {
 		d.Exec(`INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)`, k, v)

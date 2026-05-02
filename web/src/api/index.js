@@ -28,6 +28,7 @@ export default {
   // Dashboard
   dashboardInfo: () => api.get('/dashboard/info'),
   dashboardStats: () => api.get('/dashboard/stats'),
+  dashboardRefresh: () => api.post('/dashboard/refresh'),
 
   // Containers
   listContainers: () => api.get('/containers'),

@@ -35,9 +35,7 @@
       <div class="card">
         <div class="card-header">
           <div class="card-title"><Activity :size="16" /> 资源占用</div>
-          <button class="btn btn-ghost btn-sm" @click="loadStats">
-            <RefreshCw :size="13" /> 刷新
-          </button>
+          <span v-if="cacheTime" class="cache-hint">{{ cacheTimeText }}</span>
         </div>
         <div class="card-body">
           <div class="resource-gauges">
@@ -79,9 +77,16 @@
     <div class="card">
       <div class="card-header">
         <div class="card-title"><Box :size="16" /> 容器概览</div>
-        <RouterLink to="/containers" class="btn btn-ghost btn-sm">
-          查看全部 <ChevronRight :size="13" />
-        </RouterLink>
+        <div style="display:flex;align-items:center;gap:8px">
+          <button class="btn btn-ghost btn-sm" @click="refreshAll" :disabled="refreshing">
+            <div v-if="refreshing" class="spinner" style="width:12px;height:12px;border-width:2px"></div>
+            <RefreshCw v-else :size="13" />
+            刷新
+          </button>
+          <RouterLink to="/containers" class="btn btn-ghost btn-sm">
+            查看全部 <ChevronRight :size="13" />
+          </RouterLink>
+        </div>
       </div>
       <div class="card-body" style="padding:0">
         <div v-if="!containers.length" class="empty-state">
@@ -141,6 +146,16 @@ const info = ref(null)
 const stats = ref(null)
 const containers = ref([])
 const loading = ref(true)
+const refreshing = ref(false)
+const cacheTime = ref(null)
+
+const cacheTimeText = computed(() => {
+  if (!cacheTime.value) return ''
+  const diff = Math.floor((Date.now() - cacheTime.value) / 1000)
+  if (diff < 60) return `${diff}s 前更新`
+  if (diff < 3600) return `${Math.floor(diff / 60)}m 前更新`
+  return `${Math.floor(diff / 3600)}h 前更新`
+})
 
 const memPercent = computed(() => {
   if (!stats.value?.total_mem_usage || !info.value?.total_memory) return 0
@@ -185,17 +200,32 @@ function stateClass(state) {
   return 'badge-muted'
 }
 
-async function loadStats() {
+async function loadCached() {
   try {
     const [i, s] = await Promise.all([api.dashboardInfo(), api.dashboardStats()])
     info.value = i.data
     stats.value = s.data
+    cacheTime.value = Date.now()
   } catch {}
+}
+
+async function refreshAll() {
+  refreshing.value = true
+  try {
+    const r = await api.dashboardRefresh()
+    if (r.data?.info) info.value = r.data.info
+    if (r.data?.stats) stats.value = r.data.stats
+    cacheTime.value = Date.now()
+    const c = await api.listContainers()
+    containers.value = c.data || []
+  } catch {} finally {
+    refreshing.value = false
+  }
 }
 
 onMounted(async () => {
   try {
-    await loadStats()
+    await loadCached()
     const c = await api.listContainers()
     containers.value = c.data || []
   } finally {
@@ -246,4 +276,9 @@ onMounted(async () => {
 }
 .ct-dot.running { background: var(--green); box-shadow: 0 0 6px var(--green); }
 .ct-dot.stopped { background: var(--text-muted); }
+.cache-hint {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+}
 </style>

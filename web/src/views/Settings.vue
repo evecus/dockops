@@ -36,13 +36,28 @@
         </div>
       </div>
 
-      <!-- Update Check -->
+      <!-- Collect & Update Check -->
       <div class="card">
-        <div class="card-header"><div class="card-title"><Bell :size="16"/> 镜像更新检测</div></div>
+        <div class="card-header"><div class="card-title"><Bell :size="16"/> 采集 &amp; 检测间隔</div></div>
         <div class="card-body" style="display:flex;flex-direction:column;gap:16px">
           <div class="form-group">
-            <label class="form-label">检测频率</label>
+            <label class="form-label">数据采集间隔</label>
+            <select v-model="settings.collect_interval" class="form-select">
+              <option value="off">关闭</option>
+              <option value="1m">每 1 分钟</option>
+              <option value="5m">每 5 分钟</option>
+              <option value="10m">每 10 分钟（默认）</option>
+              <option value="30m">每 30 分钟</option>
+            </select>
+          </div>
+          <div class="interval-hint">
+            <Info :size="13" style="flex-shrink:0;color:var(--accent)"/>
+            <span>定时采集仪表盘数据并缓存，打开面板时即可立即看到数据，无需等待加载</span>
+          </div>
+          <div class="form-group" style="margin-top:4px">
+            <label class="form-label">镜像更新检测频率</label>
             <select v-model="settings.update_check_interval" class="form-select">
+              <option value="off">关闭</option>
               <option value="1h">每 1 小时</option>
               <option value="6h">每 6 小时（默认）</option>
               <option value="12h">每 12 小时</option>
@@ -155,7 +170,7 @@ const toast = useToastStore()
 const showPwd = ref(false), savingAdmin = ref(false), savingSettings = ref(false)
 const dockerInfo = ref(null), adminUsername = ref('')
 const admin = ref({ username: '', password: '', confirm: '' })
-const settings = ref({ update_check_interval: '6h', docker_proxy: '' })
+const settings = ref({ update_check_interval: '6h', docker_proxy: '', collect_interval: '10m' })
 const mirrors = [
   { name: '阿里云', url: 'https://registry.cn-hangzhou.aliyuncs.com' },
   { name: 'DaoCloud', url: 'https://hub-mirror.c.163.com' },
@@ -181,6 +196,7 @@ async function loadSettings() {
     const r = await api.getSettings(); const data = r.data || {}
     settings.value.update_check_interval = data.update_check_interval || '6h'
     settings.value.docker_proxy = data.docker_proxy || ''
+    settings.value.collect_interval = data.collect_interval || '10m'
     adminUsername.value = data.admin_username || 'admin'
   } catch {}
 }
@@ -196,7 +212,14 @@ async function saveAdmin() {
 }
 async function saveSettings() {
   savingSettings.value = true
-  try { await api.updateSettings({ update_check_interval: settings.value.update_check_interval, docker_proxy: settings.value.docker_proxy }); toast.success('设置已保存') }
+  try {
+    await api.updateSettings({
+      update_check_interval: settings.value.update_check_interval,
+      docker_proxy: settings.value.docker_proxy,
+      collect_interval: settings.value.collect_interval
+    })
+    toast.success('设置已保存')
+  }
   catch (e) { toast.error(typeof e === 'string' ? e : '保存失败') } finally { savingSettings.value = false }
 }
 function copyInstallCmd() {
