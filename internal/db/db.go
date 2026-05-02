@@ -4,7 +4,7 @@ import (
 	"database/sql"
 	"path/filepath"
 
-	_ "github.com/mattn/go-sqlite3"
+	_ "github.com/glebarez/sqlite" // pure-Go SQLite, no CGO required
 )
 
 type DB struct {
@@ -13,7 +13,8 @@ type DB struct {
 
 func Init(dataPath string) (*DB, error) {
 	dbPath := filepath.Join(dataPath, "dockops.db")
-	sqlDB, err := sql.Open("sqlite3", dbPath+"?_foreign_keys=on&_journal_mode=WAL")
+	// glebarez/sqlite uses "sqlite" driver name, WAL mode via pragma
+	sqlDB, err := sql.Open("sqlite", dbPath+"?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)")
 	if err != nil {
 		return nil, err
 	}
@@ -57,7 +58,6 @@ func (d *DB) migrate() error {
 		}
 	}
 
-	// Default settings
 	defaults := map[string]string{
 		"update_check_interval": "6h",
 		"docker_proxy":          "",
