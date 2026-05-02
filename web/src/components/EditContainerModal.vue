@@ -284,4 +284,18 @@ onMounted(async () => {
   flex: 1;
   white-space: pre;
 }
+
+@media (max-width: 768px) {
+  .edit-layout { flex-direction: column; min-height: unset; }
+  .edit-sidebar {
+    width: 100%;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+    padding: 12px 14px;
+  }
+  .edit-main { overflow: visible; }
+  .form-tabs { padding: 12px 14px 0; }
+  .tab-content { padding: 12px 14px; }
+  .yaml-preview-bar { padding: 10px 14px; }
+}
 </style>

@@ -416,4 +416,23 @@ onMounted(() => {
   white-space: pre;
 }
 .spin { animation: spin 0.8s linear infinite; }
+
+@media (max-width: 768px) {
+  .create-layout {
+    flex-direction: column;
+    min-height: unset;
+  }
+  .create-sidebar {
+    width: 100%;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+    padding: 14px;
+    gap: 14px;
+  }
+  .mode-list { flex-direction: row; flex-wrap: wrap; gap: 6px; }
+  .mode-item { flex: 1; min-width: 80px; flex-direction: column; text-align: center; padding: 8px 6px; gap: 4px; }
+  .mode-panel { padding: 14px; }
+  .upload-zone { padding: 24px 16px; }
+  .yaml-preview-bar { padding: 10px 14px; }
+}
 </style>

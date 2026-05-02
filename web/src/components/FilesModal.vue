@@ -292,4 +292,13 @@ onMounted(loadFiles)
   white-space: pre;
   line-height: 1.6;
 }
+
+@media (max-width: 768px) {
+  .files-toolbar { flex-wrap: wrap; gap: 8px; padding: 8px 10px; }
+  .breadcrumb { flex-wrap: wrap; }
+  .files-actions { flex-wrap: wrap; justify-content: flex-end; }
+  .file-row-actions { opacity: 1; } /* 移动端始终显示操作按钮 */
+  .files-table { font-size: 12px; }
+  .file-meta { display: none; } /* 移动端隐藏文件大小/时间，减少拥挤 */
+}
 </style>

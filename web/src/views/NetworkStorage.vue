@@ -221,4 +221,19 @@ onMounted(()=>{loadNetworks();loadVolumes()})
 .badge-purple{background:rgba(167,139,250,0.1);color:var(--purple);border:1px solid rgba(167,139,250,0.2)}
 .badge-amber{background:rgba(245,158,11,0.1);color:var(--amber);border:1px solid rgba(245,158,11,0.2)}
 .driver-desc{padding:8px 12px;background:var(--bg-input);border-radius:var(--radius);font-size:12px;color:var(--text-muted);line-height:1.5}
+
+@media (max-width: 768px) {
+  .ns-tabs { width: 100%; }
+  .ns-tab { flex: 1; justify-content: center; padding: 8px 10px; font-size: 13px; }
+  .section-header {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+    margin-bottom: 14px;
+  }
+  .section-header > div { justify-content: flex-end; }
+  /* 表格横向滚动 */
+  .card { overflow-x: auto !important; -webkit-overflow-scrolling: touch; }
+  .data-table { min-width: 600px; }
+}
 </style>

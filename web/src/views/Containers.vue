@@ -395,4 +395,21 @@ onMounted(load)
   font-family: var(--font-mono);
   white-space: nowrap;
 }
+
+@media (max-width: 768px) {
+  .page-header {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+    margin-bottom: 16px;
+  }
+  .header-right {
+    justify-content: flex-end;
+  }
+  .container-grid {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+  .ct-card { padding: 14px; }
+}
 </style>

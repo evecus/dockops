@@ -118,4 +118,8 @@ onUnmounted(() => {
 }
 :deep(.xterm) { height: 100%; }
 :deep(.xterm-screen) { height: 100% !important; }
+
+@media (max-width: 768px) {
+  .terminal-wrap { min-height: 300px; }
+}
 </style>

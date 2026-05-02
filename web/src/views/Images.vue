@@ -238,4 +238,24 @@ onMounted(load)
 .upload-zone.dragging{border-color:var(--accent);background:var(--accent-dim)}
 .load-file-info{display:flex;align-items:center;gap:8px;margin-top:12px;padding:8px 12px;background:var(--bg-input);border-radius:var(--radius);font-size:13px;color:var(--text-secondary)}
 .spin{animation:spin 0.8s linear infinite}
+
+@media (max-width: 768px) {
+  .page-header {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+    margin-bottom: 16px;
+  }
+  .page-header > div { justify-content: flex-end; }
+  .img-stats {
+    justify-content: space-around;
+    padding: 10px 12px;
+  }
+  .img-stat { padding: 0 8px; }
+  .search-box { max-width: 100%; }
+  .image-grid {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+}
 </style>

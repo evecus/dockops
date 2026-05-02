@@ -235,4 +235,11 @@ onUnmounted(() => {
 .status-dot { width: 6px; height: 6px; border-radius: 50%; }
 .status-dot.live { background: var(--green); animation: pulse-dot 1.5s infinite; }
 .status-dot.paused { background: var(--text-muted); }
+
+@media (max-width: 768px) {
+  .logs-toolbar { flex-wrap: wrap; gap: 8px; padding: 8px 10px; }
+  .search-box { max-width: 100%; flex: 1 1 100%; }
+  .log-line { font-size: 11px; padding: 1.5px 8px; gap: 6px; }
+  .log-num { min-width: 28px; }
+}
 </style>

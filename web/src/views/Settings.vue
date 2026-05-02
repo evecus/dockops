@@ -260,4 +260,13 @@ onMounted(() => { loadSettings(); loadDockerInfo() })
 .about-desc{font-size:13px;color:var(--text-muted);line-height:1.5}
 .about-tech{display:flex;flex-wrap:wrap;gap:6px;justify-content:center}
 .tech-badge{padding:3px 10px;border-radius:99px;font-size:11px;font-weight:600;background:rgba(6,182,212,0.08);color:var(--accent);border:1px solid rgba(6,182,212,0.15)}
+
+@media (max-width: 768px) {
+  .settings-grid {
+    grid-template-columns: 1fr;
+    gap: 14px;
+  }
+  .example-item { flex-direction: column; align-items: flex-start; gap: 2px; }
+  .install-code { font-size: 11px; word-break: break-all; }
+}
 </style>

@@ -185,4 +185,10 @@ onMounted(async () => {
 .stat-mini-label { font-size: 11px; color: var(--text-muted); }
 .stat-mini-val { font-size: 16px; font-weight: 700; color: var(--accent-light); font-family: var(--font-mono); }
 .font-mono { font-family: var(--font-mono); }
+
+@media (max-width: 768px) {
+  .stats-grid { grid-template-columns: repeat(2, 1fr); }
+  .detail-table td:first-child { width: 80px; font-size: 12px; }
+  .mount-item { flex-direction: column; align-items: flex-start; gap: 2px; }
+}
 </style>

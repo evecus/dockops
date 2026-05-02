@@ -672,3 +672,39 @@ input, textarea, select { font-family: var(--font-sans); outline: none; }
   background: linear-gradient(90deg, transparent, var(--accent), transparent);
   opacity: 0.4;
 }
+
+/* ===== MOBILE RESPONSIVE ===== */
+@media (max-width: 768px) {
+  /* 表格在移动端横向滚动 */
+  .table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  table { min-width: 560px; }
+
+  /* 统计卡片改为2列 */
+  .grid-4 { grid-template-columns: 1fr 1fr !important; gap: 12px !important; }
+
+  /* 双列布局改为单列 */
+  .grid-2 { grid-template-columns: 1fr !important; gap: 12px !important; }
+
+  /* 模态框全屏 */
+  .modal-box {
+    width: 100% !important;
+    max-width: 100% !important;
+    margin: 0 !important;
+    border-radius: 16px 16px 0 0 !important;
+    position: fixed !important;
+    bottom: 0 !important;
+    left: 0 !important;
+    right: 0 !important;
+    max-height: 90vh !important;
+    overflow-y: auto !important;
+  }
+  .modal-overlay { align-items: flex-end !important; }
+
+  /* 卡片内边距收窄 */
+  .card-body { padding: 14px !important; }
+  .card-header { padding: 12px 14px !important; }
+
+  /* 筛选栏换行 */
+  .toolbar { flex-wrap: wrap; gap: 8px !important; }
+  .toolbar .search-box { width: 100% !important; }
+}
