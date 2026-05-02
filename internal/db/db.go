@@ -3,6 +3,7 @@ package db
 import (
 	"database/sql"
 	"path/filepath"
+	"strings"
 
 	_ "github.com/glebarez/sqlite" // pure-Go SQLite, no CGO required
 )
@@ -43,9 +44,11 @@ func (d *DB) migrate() error {
 			compose_content TEXT,
 			docker_id TEXT,
 			update_available INTEGER DEFAULT 0,
+			source TEXT NOT NULL DEFAULT 'dockops',
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		)`,
+	`ALTER TABLE containers ADD COLUMN source TEXT NOT NULL DEFAULT 'dockops'`,
 		`CREATE TABLE IF NOT EXISTS settings (
 			key TEXT PRIMARY KEY,
 			value TEXT NOT NULL
@@ -54,7 +57,10 @@ func (d *DB) migrate() error {
 
 	for _, q := range queries {
 		if _, err := d.Exec(q); err != nil {
-			return err
+			// ignore "duplicate column" errors from ALTER TABLE on existing DBs
+			if !strings.Contains(err.Error(), "duplicate column") {
+				return err
+			}
 		}
 	}
 

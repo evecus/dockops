@@ -23,20 +23,20 @@ import (
 )
 
 type Server struct {
-	cfg    *config.Config
-	db     *db.DB
-	webFS  embed.FS
-	sched  *scheduler.Scheduler
+	cfg     *config.Config
+	db      *db.DB
+	webFS   embed.FS
+	sched   *scheduler.Scheduler
 	compose *compose.Manager
 }
 
 func NewServer(cfg *config.Config, database *db.DB, webFS embed.FS, sched *scheduler.Scheduler) *Server {
 	return &Server{
-		cfg:    cfg,
-		db:     database,
-		webFS:  webFS,
-		sched:  sched,
-		compose: compose.NewManager(database),
+		cfg:     cfg,
+		db:      database,
+		webFS:   webFS,
+		sched:   sched,
+		compose: compose.NewManager(database, cfg.DataPath),
 	}
 }
 
@@ -53,7 +53,6 @@ func (s *Server) Run() error {
 	r := gin.New()
 	r.Use(gin.Recovery())
 
-	// API routes
 	api := r.Group("/api")
 	{
 		api.GET("/system/status", s.systemStatus)
@@ -69,7 +68,9 @@ func (s *Server) Run() error {
 			auth.GET("/containers", s.listContainers)
 			auth.POST("/containers", s.createContainer)
 			auth.POST("/containers/parse-run", s.parseDockerRun)
+			auth.POST("/containers/check-updates", s.checkUpdates)
 			auth.GET("/containers/:id", s.getContainer)
+			auth.GET("/containers/:id/form-data", s.getContainerFormData)
 			auth.PUT("/containers/:id", s.updateContainer)
 			auth.DELETE("/containers/:id", s.deleteContainer)
 			auth.POST("/containers/:id/start", s.startContainer)
@@ -82,7 +83,6 @@ func (s *Server) Run() error {
 			auth.POST("/containers/:id/files/upload", s.uploadFile)
 			auth.DELETE("/containers/:id/files", s.deleteFile)
 			auth.POST("/containers/:id/update", s.updateContainerImage)
-			auth.POST("/containers/check-updates", s.checkUpdates)
 
 			// Images
 			auth.GET("/images", s.listImages)
@@ -121,7 +121,6 @@ func (s *Server) Run() error {
 	// SPA frontend
 	webSub, err := fs.Sub(s.webFS, "web/dist")
 	if err != nil {
-		// If no embedded frontend, serve simple message
 		r.NoRoute(func(c *gin.Context) {
 			if strings.HasPrefix(c.Request.URL.Path, "/api") {
 				c.JSON(404, gin.H{"error": "not found"})
@@ -137,7 +136,6 @@ func (s *Server) Run() error {
 				c.JSON(404, gin.H{"error": "not found"})
 				return
 			}
-			// Static assets (js/css/images) - serve directly, never fallback
 			if strings.HasPrefix(path, "/assets/") ||
 				strings.HasSuffix(path, ".js") ||
 				strings.HasSuffix(path, ".css") ||
@@ -148,7 +146,6 @@ func (s *Server) Run() error {
 				fileServer.ServeHTTP(c.Writer, c.Request)
 				return
 			}
-			// SPA fallback: all other routes serve index.html
 			c.Request.URL.Path = "/"
 			fileServer.ServeHTTP(c.Writer, c.Request)
 		})
@@ -272,44 +269,70 @@ func (s *Server) dashboardStats(c *gin.Context) {
 
 // ===== CONTAINERS =====
 
+// EnrichedContainer is the unified response shape for the containers list.
+type EnrichedContainer struct {
+	compose.ContainerRecord
+	DockerState  string               `json:"docker_state"`
+	DockerStatus string               `json:"docker_status"`
+	Ports        []docker.PortBinding `json:"ports"`
+}
+
 func (s *Server) listContainers(c *gin.Context) {
-	records, err := s.compose.ListContainers()
+	// 1. Get all real Docker containers
+	client, err := docker.NewClient()
+	if err != nil {
+		fail(c, 500, err.Error())
+		return
+	}
+	defer client.Close()
+
+	dockerContainers, err := client.ListContainers(context.Background())
 	if err != nil {
 		fail(c, 500, err.Error())
 		return
 	}
 
-	// Enrich with live docker state
-	client, err := docker.NewClient()
-	if err != nil {
-		ok(c, records)
-		return
-	}
-	defer client.Close()
-
-	dockerContainers, _ := client.ListContainers(context.Background())
+	// 2. Build name→docker map
 	dockerMap := make(map[string]docker.ContainerSummary)
 	for _, dc := range dockerContainers {
 		dockerMap[dc.Name] = dc
 	}
 
-	type EnrichedContainer struct {
-		compose.ContainerRecord
-		DockerState  string               `json:"docker_state"`
-		DockerStatus string               `json:"docker_status"`
-		Ports        []docker.PortBinding `json:"ports"`
-		Stats        *docker.ContainerStats `json:"stats,omitempty"`
+	// 3. Load dockops DB records
+	records, _ := s.compose.ListContainers()
+	dbByName := make(map[string]compose.ContainerRecord)
+	for _, r := range records {
+		dbByName[r.Name] = r
 	}
 
+	// 4. Ensure every Docker container has a DB record (register externals)
+	for _, dc := range dockerContainers {
+		if _, exists := dbByName[dc.Name]; !exists {
+			rec, err := s.compose.RegisterExternal(dc.Name)
+			if err == nil {
+				dbByName[dc.Name] = *rec
+			}
+		}
+	}
+
+	// 5. Reload DB records after registration
+	records, _ = s.compose.ListContainers()
+
+	// 6. Emit enriched list — only containers that actually exist in Docker
 	var result []EnrichedContainer
 	for _, r := range records {
-		ec := EnrichedContainer{ContainerRecord: r}
-		if dc, ok := dockerMap[r.Name]; ok {
-			ec.DockerState = dc.State
-			ec.DockerStatus = dc.Status
-			ec.Ports = dc.Ports
+		dc, exists := dockerMap[r.Name]
+		if !exists {
+			// Container is in DB but not in Docker (deleted externally) — still show it
+			result = append(result, EnrichedContainer{ContainerRecord: r})
+			continue
 		}
-		result = append(result, ec)
+		result = append(result, EnrichedContainer{
+			ContainerRecord: r,
+			DockerState:     dc.State,
+			DockerStatus:    dc.Status,
+			Ports:           dc.Ports,
+		})
 	}
 
 	ok(c, result)
@@ -328,7 +351,6 @@ func (s *Server) createContainer(c *gin.Context) {
 		return
 	}
 
-	// Start the container
 	if err := s.compose.Up(record.ID); err != nil {
 		fail(c, 500, "Container created but failed to start: "+err.Error())
 		return
@@ -377,6 +399,80 @@ func (s *Server) getContainer(c *gin.Context) {
 	ok(c, gin.H{"record": record, "docker": detail})
 }
 
+// getContainerFormData returns pre-filled FormFields for the edit modal.
+// For dockops containers it parses the stored compose YAML;
+// for external containers it reverse-engineers docker inspect output.
+func (s *Server) getContainerFormData(c *gin.Context) {
+	id := c.Param("id")
+	record, err := s.compose.GetContainer(id)
+	if err != nil {
+		fail(c, 404, "container not found")
+		return
+	}
+
+	client, err := docker.NewClient()
+	if err != nil {
+		fail(c, 500, err.Error())
+		return
+	}
+	defer client.Close()
+
+	detail, err := client.InspectContainer(context.Background(), record.Name)
+	if err != nil {
+		fail(c, 500, "failed to inspect container: "+err.Error())
+		return
+	}
+
+	// Build FormFields from docker inspect
+	fields := &compose.FormFields{
+		Image:      detail.Image,
+		Hostname:   detail.Hostname,
+		Privileged: false,
+	}
+
+	// Restart policy
+	fields.Restart = detail.RestartPolicy
+
+	// Ports: "hostPort:containerPort/proto"
+	for _, p := range detail.Ports {
+		if p.HostPort != "" && p.HostPort != "0" {
+			fields.Ports = append(fields.Ports, fmt.Sprintf("%s:%s/%s", p.HostPort, p.ContainerPort, p.Protocol))
+		}
+	}
+
+	// Volumes
+	for _, m := range detail.Mounts {
+		if m.Type == "bind" {
+			fields.Volumes = append(fields.Volumes, fmt.Sprintf("%s:%s", m.Source, m.Destination))
+		} else if m.Type == "volume" {
+			fields.Volumes = append(fields.Volumes, fmt.Sprintf("%s:%s", m.Source, m.Destination))
+		}
+	}
+
+	// Environment — filter out variables that have no value (likely image defaults)
+	for _, e := range detail.Env {
+		if strings.Contains(e, "=") {
+			fields.Env = append(fields.Env, e)
+		}
+	}
+
+	// Networks
+	for net := range detail.Networks {
+		if net != "bridge" && net != "host" && net != "none" {
+			fields.NetworkMode = ""
+		} else {
+			fields.NetworkMode = net
+		}
+		break
+	}
+
+	ok(c, gin.H{
+		"name":   record.Name,
+		"source": record.Source,
+		"fields": fields,
+	})
+}
+
 func (s *Server) updateContainer(c *gin.Context) {
 	id := c.Param("id")
 	var req compose.CreateRequest
@@ -409,6 +505,28 @@ func (s *Server) deleteContainer(c *gin.Context) {
 
 func (s *Server) startContainer(c *gin.Context) {
 	id := c.Param("id")
+	record, err := s.compose.GetContainer(id)
+	if err != nil {
+		fail(c, 404, "not found")
+		return
+	}
+
+	// External containers with no compose file: use docker start directly
+	if record.Source == "external" || record.ComposeContent == "" {
+		client, err := docker.NewClient()
+		if err != nil {
+			fail(c, 500, err.Error())
+			return
+		}
+		defer client.Close()
+		if err := client.StartContainer(context.Background(), record.Name); err != nil {
+			fail(c, 500, err.Error())
+			return
+		}
+		ok(c, gin.H{"message": "started"})
+		return
+	}
+
 	if err := s.compose.Up(id); err != nil {
 		fail(c, 500, err.Error())
 		return
@@ -418,6 +536,27 @@ func (s *Server) startContainer(c *gin.Context) {
 
 func (s *Server) stopContainer(c *gin.Context) {
 	id := c.Param("id")
+	record, err := s.compose.GetContainer(id)
+	if err != nil {
+		fail(c, 404, "not found")
+		return
+	}
+
+	if record.Source == "external" || record.ComposeContent == "" {
+		client, err := docker.NewClient()
+		if err != nil {
+			fail(c, 500, err.Error())
+			return
+		}
+		defer client.Close()
+		if err := client.StopContainer(context.Background(), record.Name); err != nil {
+			fail(c, 500, err.Error())
+			return
+		}
+		ok(c, gin.H{"message": "stopped"})
+		return
+	}
+
 	if err := s.compose.Down(id); err != nil {
 		fail(c, 500, err.Error())
 		return
@@ -427,6 +566,27 @@ func (s *Server) stopContainer(c *gin.Context) {
 
 func (s *Server) restartContainer(c *gin.Context) {
 	id := c.Param("id")
+	record, err := s.compose.GetContainer(id)
+	if err != nil {
+		fail(c, 404, "not found")
+		return
+	}
+
+	if record.Source == "external" || record.ComposeContent == "" {
+		client, err := docker.NewClient()
+		if err != nil {
+			fail(c, 500, err.Error())
+			return
+		}
+		defer client.Close()
+		if err := client.RestartContainer(context.Background(), record.Name); err != nil {
+			fail(c, 500, err.Error())
+			return
+		}
+		ok(c, gin.H{"message": "restarted"})
+		return
+	}
+
 	if err := s.compose.Down(id); err != nil {
 		fail(c, 500, err.Error())
 		return
@@ -486,7 +646,6 @@ func (s *Server) containerLogs(c *gin.Context) {
 	defer reader.Close()
 
 	data, _ := io.ReadAll(reader)
-	// Strip docker multiplexed stream headers
 	cleaned := stripDockerHeaders(data)
 	ok(c, gin.H{"logs": string(cleaned)})
 }
@@ -498,7 +657,6 @@ func stripDockerHeaders(data []byte) []byte {
 		if i+8 > len(data) {
 			break
 		}
-		// header: [stream_type(1), 0, 0, 0, size(4 big-endian)]
 		size := int(data[i+4])<<24 | int(data[i+5])<<16 | int(data[i+6])<<8 | int(data[i+7])
 		i += 8
 		if i+size > len(data) {
@@ -677,7 +835,6 @@ func (s *Server) pullImage(c *gin.Context) {
 	}
 	defer client.Close()
 
-	// Stream pull progress via SSE
 	c.Header("Content-Type", "text/event-stream")
 	c.Header("Cache-Control", "no-cache")
 	c.Header("Connection", "keep-alive")
@@ -947,20 +1104,17 @@ func (s *Server) updateAdmin(c *gin.Context) {
 }
 
 func (s *Server) installDocker(c *gin.Context) {
-	// Stream install progress
 	c.Header("Content-Type", "text/event-stream")
 	c.Header("Cache-Control", "no-cache")
 
 	c.SSEvent("info", "Starting Docker installation...")
 	c.Writer.Flush()
 
-	// This runs the official Docker install script
 	c.SSEvent("info", "Run: curl -fsSL https://get.docker.com | sh")
 	c.SSEvent("info", "Please run this command manually or configure sudo access")
 	c.SSEvent("done", "")
 }
 
-// GetContainerLogs for http endpoint (not WS)
 func (s *Server) GetContainerLogs(containerName, tail string) (string, error) {
 	client, err := docker.NewClient()
 	if err != nil {
@@ -981,5 +1135,4 @@ func (s *Server) GetContainerLogs(containerName, tail string) (string, error) {
 	return string(stripDockerHeaders(data)), nil
 }
 
-// ensure strings is used
 var _ = strings.TrimPrefix

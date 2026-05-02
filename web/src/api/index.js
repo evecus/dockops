@@ -34,6 +34,7 @@ export default {
   createContainer: (data) => api.post('/containers', data),
   parseDockerRun: (command) => api.post('/containers/parse-run', { command }),
   getContainer: (id) => api.get(`/containers/${id}`),
+  getContainerFormData: (id) => api.get(`/containers/${id}/form-data`),
   updateContainer: (id, data) => api.put(`/containers/${id}`, data),
   deleteContainer: (id) => api.delete(`/containers/${id}`),
   startContainer: (id) => api.post(`/containers/${id}/start`),

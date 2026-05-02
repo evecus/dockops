@@ -46,7 +46,11 @@
 
         <!-- Info -->
         <div class="ct-info">
-          <div class="ct-info-row">
+          <div class="ct-info-row" v-if="ct.source === 'external'">
+            <span class="ct-info-key">来源</span>
+            <span class="ct-info-val tag" style="color:var(--amber);background:rgba(245,158,11,0.1);border-color:rgba(245,158,11,0.2)">外部容器</span>
+          </div>
+          <div class="ct-info-row" v-if="ct.source !== 'external'">
             <span class="ct-info-key">目录</span>
             <span class="ct-info-val tag">{{ shortPath(ct.compose_dir) }}</span>
           </div>
@@ -105,7 +109,7 @@
 
       <!-- Edit Modal -->
       <div v-if="editCt" class="modal-overlay" @click.self="editCt = null">
-        <CreateContainerModal :editing="editCt" @close="editCt = null" @created="onCreated" />
+        <EditContainerModal :container="editCt" @close="editCt = null" @saved="onCreated" />
       </div>
 
       <!-- Terminal Modal -->
@@ -159,6 +163,7 @@ import api from '@/api'
 import { useToastStore } from '@/stores/toast'
 import CreateContainerModal from '@/components/CreateContainerModal.vue'
 import ContainerDetailModal from '@/components/ContainerDetailModal.vue'
+import EditContainerModal from '@/components/EditContainerModal.vue'
 import TerminalModal from '@/components/TerminalModal.vue'
 import LogsModal from '@/components/LogsModal.vue'
 import FilesModal from '@/components/FilesModal.vue'

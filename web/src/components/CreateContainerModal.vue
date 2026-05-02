@@ -17,11 +17,6 @@
               <label class="form-label">容器名称 *</label>
               <input v-model="form.name" class="form-input" placeholder="my-app" required />
             </div>
-            <div class="form-group">
-              <label class="form-label">Compose 目录 *</label>
-              <input v-model="form.compose_dir" class="form-input" placeholder="/opt/docker/my-app" required />
-              <div class="form-hint">目录不存在将自动创建</div>
-            </div>
           </div>
 
           <div class="sidebar-section">
@@ -235,7 +230,6 @@ const formTab = ref('basic')
 
 const form = ref({
   name: '',
-  compose_dir: '',
   create_mode: 'paste',
   compose_content: ''
 })
@@ -318,7 +312,6 @@ async function parseRun() {
 
 async function submit() {
   if (!form.value.name) { toast.error('请填写容器名称'); return }
-  if (!form.value.compose_dir) { toast.error('请填写 Compose 目录'); return }
   if (!form.value.compose_content) { toast.error('请填写 Compose 内容'); return }
 
   submitting.value = true
@@ -338,7 +331,6 @@ async function submit() {
 onMounted(() => {
   if (props.editing) {
     form.value.name = props.editing.name
-    form.value.compose_dir = props.editing.compose_dir
     form.value.create_mode = props.editing.create_mode || 'paste'
     form.value.compose_content = props.editing.compose_content || ''
     mode.value = props.editing.create_mode || 'paste'

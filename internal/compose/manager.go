@@ -13,29 +13,35 @@ import (
 )
 
 type ContainerRecord struct {
-	ID             string `json:"id"`
-	Name           string `json:"name"`
-	ComposeDir     string `json:"compose_dir"`
-	CreateMode     string `json:"create_mode"`
-	ComposeContent string `json:"compose_content"`
-	DockerID       string `json:"docker_id"`
-	UpdateAvailable bool  `json:"update_available"`
-	CreatedAt      string `json:"created_at"`
-	UpdatedAt      string `json:"updated_at"`
+	ID              string `json:"id"`
+	Name            string `json:"name"`
+	ComposeDir      string `json:"compose_dir"`
+	CreateMode      string `json:"create_mode"`
+	ComposeContent  string `json:"compose_content"`
+	DockerID        string `json:"docker_id"`
+	UpdateAvailable bool   `json:"update_available"`
+	Source          string `json:"source"` // "dockops" | "external"
+	CreatedAt       string `json:"created_at"`
+	UpdatedAt       string `json:"updated_at"`
 }
 
 type Manager struct {
-	db *db.DB
+	db       *db.DB
+	dataPath string
 }
 
-func NewManager(database *db.DB) *Manager {
-	return &Manager{db: database}
+func NewManager(database *db.DB, dataPath string) *Manager {
+	return &Manager{db: database, dataPath: dataPath}
+}
+
+func (m *Manager) autoComposeDir(name string) string {
+	return filepath.Join(m.dataPath, "compose", name)
 }
 
 func (m *Manager) ListContainers() ([]ContainerRecord, error) {
 	rows, err := m.db.Query(`
-		SELECT id, name, compose_dir, create_mode, compose_content, 
-		       COALESCE(docker_id,''), update_available, created_at, updated_at 
+		SELECT id, name, compose_dir, create_mode, compose_content,
+		       COALESCE(docker_id,''), update_available, COALESCE(source,'dockops'), created_at, updated_at
 		FROM containers ORDER BY created_at DESC`)
 	if err != nil {
 		return nil, err
@@ -47,7 +53,7 @@ func (m *Manager) ListContainers() ([]ContainerRecord, error) {
 		var r ContainerRecord
 		var updateAvail int
 		if err := rows.Scan(&r.ID, &r.Name, &r.ComposeDir, &r.CreateMode, &r.ComposeContent,
-			&r.DockerID, &updateAvail, &r.CreatedAt, &r.UpdatedAt); err != nil {
+			&r.DockerID, &updateAvail, &r.Source, &r.CreatedAt, &r.UpdatedAt); err != nil {
 			return nil, err
 		}
 		r.UpdateAvailable = updateAvail == 1
@@ -61,10 +67,26 @@ func (m *Manager) GetContainer(id string) (*ContainerRecord, error) {
 	var updateAvail int
 	err := m.db.QueryRow(`
 		SELECT id, name, compose_dir, create_mode, compose_content,
-		       COALESCE(docker_id,''), update_available, created_at, updated_at
+		       COALESCE(docker_id,''), update_available, COALESCE(source,'dockops'), created_at, updated_at
 		FROM containers WHERE id = ?`, id).
 		Scan(&r.ID, &r.Name, &r.ComposeDir, &r.CreateMode, &r.ComposeContent,
-			&r.DockerID, &updateAvail, &r.CreatedAt, &r.UpdatedAt)
+			&r.DockerID, &updateAvail, &r.Source, &r.CreatedAt, &r.UpdatedAt)
+	if err != nil {
+		return nil, err
+	}
+	r.UpdateAvailable = updateAvail == 1
+	return &r, nil
+}
+
+func (m *Manager) GetContainerByName(name string) (*ContainerRecord, error) {
+	var r ContainerRecord
+	var updateAvail int
+	err := m.db.QueryRow(`
+		SELECT id, name, compose_dir, create_mode, compose_content,
+		       COALESCE(docker_id,''), update_available, COALESCE(source,'dockops'), created_at, updated_at
+		FROM containers WHERE name = ?`, name).
+		Scan(&r.ID, &r.Name, &r.ComposeDir, &r.CreateMode, &r.ComposeContent,
+			&r.DockerID, &updateAvail, &r.Source, &r.CreatedAt, &r.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -74,27 +96,27 @@ func (m *Manager) GetContainer(id string) (*ContainerRecord, error) {
 
 type CreateRequest struct {
 	Name           string `json:"name"`
-	ComposeDir     string `json:"compose_dir"`
 	CreateMode     string `json:"create_mode"` // upload|paste|run|form
 	ComposeContent string `json:"compose_content"`
 }
 
 func (m *Manager) CreateContainer(req *CreateRequest) (*ContainerRecord, error) {
-	// Ensure directory exists
-	if err := os.MkdirAll(req.ComposeDir, 0755); err != nil {
+	composeDir := m.autoComposeDir(req.Name)
+
+	if err := os.MkdirAll(composeDir, 0755); err != nil {
 		return nil, fmt.Errorf("failed to create directory: %w", err)
 	}
 
-	composePath := filepath.Join(req.ComposeDir, "docker-compose.yml")
+	composePath := filepath.Join(composeDir, "docker-compose.yml")
 	if err := os.WriteFile(composePath, []byte(req.ComposeContent), 0644); err != nil {
 		return nil, fmt.Errorf("failed to write compose file: %w", err)
 	}
 
 	id := uuid.New().String()
 	_, err := m.db.Exec(`
-		INSERT INTO containers (id, name, compose_dir, create_mode, compose_content)
-		VALUES (?, ?, ?, ?, ?)`,
-		id, req.Name, req.ComposeDir, req.CreateMode, req.ComposeContent)
+		INSERT INTO containers (id, name, compose_dir, create_mode, compose_content, source)
+		VALUES (?, ?, ?, ?, ?, 'dockops')`,
+		id, req.Name, composeDir, req.CreateMode, req.ComposeContent)
 	if err != nil {
 		return nil, err
 	}
@@ -103,31 +125,54 @@ func (m *Manager) CreateContainer(req *CreateRequest) (*ContainerRecord, error) 
 }
 
 func (m *Manager) UpdateContainer(id string, req *CreateRequest) error {
-	// Get existing record
 	record, err := m.GetContainer(id)
 	if err != nil {
 		return err
 	}
 
-	// Stop and remove existing compose stack
+	// Stop existing stack (best-effort; external containers may have no compose file)
 	m.composeDown(record.ComposeDir)
 
-	// Ensure new dir exists
-	if err := os.MkdirAll(req.ComposeDir, 0755); err != nil {
+	targetName := req.Name
+	if targetName == "" {
+		targetName = record.Name
+	}
+	composeDir := m.autoComposeDir(targetName)
+
+	if err := os.MkdirAll(composeDir, 0755); err != nil {
 		return err
 	}
 
-	composePath := filepath.Join(req.ComposeDir, "docker-compose.yml")
+	composePath := filepath.Join(composeDir, "docker-compose.yml")
 	if err := os.WriteFile(composePath, []byte(req.ComposeContent), 0644); err != nil {
 		return err
 	}
 
 	_, err = m.db.Exec(`
-		UPDATE containers SET name=?, compose_dir=?, create_mode=?, compose_content=?, 
-		                      updated_at=CURRENT_TIMESTAMP
+		UPDATE containers SET name=?, compose_dir=?, create_mode=?, compose_content=?,
+		                      source='dockops', updated_at=CURRENT_TIMESTAMP
 		WHERE id=?`,
-		req.Name, req.ComposeDir, req.CreateMode, req.ComposeContent, id)
+		targetName, composeDir, req.CreateMode, req.ComposeContent, id)
 	return err
+}
+
+// RegisterExternal upserts a record for a Docker container not created by dockops.
+func (m *Manager) RegisterExternal(name string) (*ContainerRecord, error) {
+	existing, err := m.GetContainerByName(name)
+	if err == nil {
+		return existing, nil
+	}
+
+	id := uuid.New().String()
+	composeDir := m.autoComposeDir(name)
+	_, err = m.db.Exec(`
+		INSERT INTO containers (id, name, compose_dir, create_mode, compose_content, source)
+		VALUES (?, ?, ?, 'external', '', 'external')`,
+		id, name, composeDir)
+	if err != nil {
+		return nil, err
+	}
+	return m.GetContainer(id)
 }
 
 func (m *Manager) DeleteContainer(id string) error {
@@ -163,7 +208,6 @@ func (m *Manager) Pull(id string) error {
 	if err != nil {
 		return err
 	}
-
 	cmd := exec.Command("docker", "compose", "-f",
 		filepath.Join(record.ComposeDir, "docker-compose.yml"), "pull")
 	cmd.Dir = record.ComposeDir
@@ -209,8 +253,85 @@ func (m *Manager) composeDown(dir string) error {
 	}
 	cmd := exec.CommandContext(context.Background(), "docker", "compose", "-f", composePath, "down")
 	cmd.Dir = dir
-	cmd.Run() // best effort
+	cmd.Run()
 	return nil
+}
+
+// FormFields is the structured data for the edit form.
+type FormFields struct {
+	Image       string   `json:"image"`
+	Restart     string   `json:"restart"`
+	Hostname    string   `json:"hostname"`
+	Privileged  bool     `json:"privileged"`
+	Ports       []string `json:"ports"`
+	Volumes     []string `json:"volumes"`
+	Env         []string `json:"env"`
+	Command     string   `json:"command"`
+	Entrypoint  string   `json:"entrypoint"`
+	User        string   `json:"user"`
+	NetworkMode string   `json:"network_mode"`
+}
+
+// BuildComposeFromFields generates docker-compose.yml content from FormFields.
+func BuildComposeFromFields(name string, f *FormFields) string {
+	svcName := name
+	if svcName == "" {
+		svcName = "app"
+	}
+	y := fmt.Sprintf("version: '3.8'\n\nservices:\n  %s:\n    image: %s\n", svcName, f.Image)
+	if f.Restart != "" {
+		y += fmt.Sprintf("    restart: %s\n", f.Restart)
+	}
+	if f.Hostname != "" {
+		y += fmt.Sprintf("    hostname: %s\n", f.Hostname)
+	}
+	if f.Privileged {
+		y += "    privileged: true\n"
+	}
+	if f.NetworkMode != "" {
+		y += fmt.Sprintf("    network_mode: %s\n", f.NetworkMode)
+	}
+	if f.Command != "" {
+		y += fmt.Sprintf("    command: %s\n", f.Command)
+	}
+	if f.Entrypoint != "" {
+		y += fmt.Sprintf("    entrypoint: %s\n", f.Entrypoint)
+	}
+	if f.User != "" {
+		y += fmt.Sprintf("    user: \"%s\"\n", f.User)
+	}
+	ports := filterEmpty(f.Ports)
+	if len(ports) > 0 {
+		y += "    ports:\n"
+		for _, p := range ports {
+			y += fmt.Sprintf("      - \"%s\"\n", p)
+		}
+	}
+	vols := filterEmpty(f.Volumes)
+	if len(vols) > 0 {
+		y += "    volumes:\n"
+		for _, v := range vols {
+			y += fmt.Sprintf("      - %s\n", v)
+		}
+	}
+	envs := filterEmpty(f.Env)
+	if len(envs) > 0 {
+		y += "    environment:\n"
+		for _, e := range envs {
+			y += fmt.Sprintf("      - %s\n", e)
+		}
+	}
+	return y
+}
+
+func filterEmpty(ss []string) []string {
+	var out []string
+	for _, s := range ss {
+		if strings.TrimSpace(s) != "" {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 // ExtractImageFromCompose extracts image name from compose YAML content
