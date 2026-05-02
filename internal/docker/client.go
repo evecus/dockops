@@ -14,7 +14,7 @@ import (
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/image"
-	"github.com/docker/docker/api/types/network"
+	dockernetwork "github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/api/types/volume"
 	"github.com/docker/docker/client"
 )
@@ -32,6 +32,8 @@ func NewClient() (*Client, error) {
 }
 
 func (c *Client) Close() { c.cli.Close() }
+
+// ===== SYSTEM =====
 
 type SystemInfo struct {
 	DockerVersion     string `json:"docker_version"`
@@ -57,14 +59,25 @@ func (c *Client) GetSystemInfo(ctx context.Context) (*SystemInfo, error) {
 		return nil, err
 	}
 	return &SystemInfo{
-		DockerVersion: info.ServerVersion, OS: info.OperatingSystem, Arch: info.Architecture,
-		KernelVersion: info.KernelVersion, TotalMemory: info.MemTotal, CPUs: info.NCPU,
-		StorageDriver: info.Driver, LoggingDriver: info.LoggingDriver, DockerRootDir: info.DockerRootDir,
-		Containers: info.Containers, ContainersPaused: info.ContainersPaused,
-		ContainersStopped: info.ContainersStopped, ContainersRunning: info.ContainersRunning,
-		Images: info.Images, ServerTime: time.Now().Format(time.RFC3339),
+		DockerVersion:     info.ServerVersion,
+		OS:                info.OperatingSystem,
+		Arch:              info.Architecture,
+		KernelVersion:     info.KernelVersion,
+		TotalMemory:       info.MemTotal,
+		CPUs:              info.NCPU,
+		StorageDriver:     info.Driver,
+		LoggingDriver:     info.LoggingDriver,
+		DockerRootDir:     info.DockerRootDir,
+		Containers:        info.Containers,
+		ContainersPaused:  info.ContainersPaused,
+		ContainersStopped: info.ContainersStopped,
+		ContainersRunning: info.ContainersRunning,
+		Images:            info.Images,
+		ServerTime:        time.Now().Format(time.RFC3339),
 	}, nil
 }
+
+// ===== CONTAINERS =====
 
 type ContainerSummary struct {
 	ID      string            `json:"id"`
@@ -96,8 +109,10 @@ func (c *Client) ListContainers(ctx context.Context) ([]ContainerSummary, error)
 		var ports []PortBinding
 		for _, p := range ct.Ports {
 			ports = append(ports, PortBinding{
-				HostIP: p.IP, HostPort: fmt.Sprintf("%d", p.PublicPort),
-				ContainerPort: fmt.Sprintf("%d", p.PrivatePort), Protocol: p.Type,
+				HostIP:        p.IP,
+				HostPort:      fmt.Sprintf("%d", p.PublicPort),
+				ContainerPort: fmt.Sprintf("%d", p.PrivatePort),
+				Protocol:      p.Type,
 			})
 		}
 		shortID := ct.ID
@@ -105,8 +120,15 @@ func (c *Client) ListContainers(ctx context.Context) ([]ContainerSummary, error)
 			shortID = shortID[:12]
 		}
 		result = append(result, ContainerSummary{
-			ID: shortID, Name: name, Image: ct.Image, ImageID: ct.ImageID,
-			Status: ct.Status, State: ct.State, Ports: ports, Created: ct.Created, Labels: ct.Labels,
+			ID:      shortID,
+			Name:    name,
+			Image:   ct.Image,
+			ImageID: ct.ImageID,
+			Status:  ct.Status,
+			State:   ct.State,
+			Ports:   ports,
+			Created: ct.Created,
+			Labels:  ct.Labels,
 		})
 	}
 	return result, nil
@@ -142,12 +164,22 @@ func (c *Client) InspectContainer(ctx context.Context, id string) (*ContainerDet
 			if len(parts) == 2 {
 				proto = parts[1]
 			}
-			ports = append(ports, PortBinding{HostIP: b.HostIP, HostPort: b.HostPort, ContainerPort: parts[0], Protocol: proto})
+			ports = append(ports, PortBinding{
+				HostIP:        b.HostIP,
+				HostPort:      b.HostPort,
+				ContainerPort: parts[0],
+				Protocol:      proto,
+			})
 		}
 	}
 	var mounts []MountInfo
 	for _, m := range info.Mounts {
-		mounts = append(mounts, MountInfo{Type: string(m.Type), Source: m.Source, Destination: m.Destination, Mode: m.Mode})
+		mounts = append(mounts, MountInfo{
+			Type:        string(m.Type),
+			Source:      m.Source,
+			Destination: m.Destination,
+			Mode:        m.Mode,
+		})
 	}
 	networks := make(map[string]string)
 	for k, v := range info.NetworkSettings.Networks {
@@ -157,10 +189,30 @@ func (c *Client) InspectContainer(ctx context.Context, id string) (*ContainerDet
 	if len(shortID) > 12 {
 		shortID = shortID[:12]
 	}
+
+	// info.Created is a string like "2024-01-01T00:00:00Z"
+	createdTs := int64(0)
+	if t, err := time.Parse(time.RFC3339, info.Created); err == nil {
+		createdTs = t.Unix()
+	} else if t, err := time.Parse(time.RFC3339Nano, info.Created); err == nil {
+		createdTs = t.Unix()
+	}
+
 	return &ContainerDetail{
-		ContainerSummary: ContainerSummary{ID: shortID, Name: name, Image: info.Config.Image, ImageID: info.Image,
-			Status: info.State.Status, State: info.State.Status, Ports: ports, Created: info.Created.Unix()},
-		Hostname: info.Config.Hostname, Env: info.Config.Env, Mounts: mounts, Networks: networks,
+		ContainerSummary: ContainerSummary{
+			ID:      shortID,
+			Name:    name,
+			Image:   info.Config.Image,
+			ImageID: info.Image,
+			Status:  info.State.Status,
+			State:   info.State.Status,
+			Ports:   ports,
+			Created: createdTs,
+		},
+		Hostname:      info.Config.Hostname,
+		Env:           info.Config.Env,
+		Mounts:        mounts,
+		Networks:      networks,
 		RestartPolicy: string(info.HostConfig.RestartPolicy.Name),
 	}, nil
 }
@@ -168,17 +220,22 @@ func (c *Client) InspectContainer(ctx context.Context, id string) (*ContainerDet
 func (c *Client) StartContainer(ctx context.Context, id string) error {
 	return c.cli.ContainerStart(ctx, id, container.StartOptions{})
 }
+
 func (c *Client) StopContainer(ctx context.Context, id string) error {
 	t := 30
 	return c.cli.ContainerStop(ctx, id, container.StopOptions{Timeout: &t})
 }
+
 func (c *Client) RestartContainer(ctx context.Context, id string) error {
 	t := 30
 	return c.cli.ContainerRestart(ctx, id, container.StopOptions{Timeout: &t})
 }
+
 func (c *Client) RemoveContainer(ctx context.Context, id string, force bool) error {
 	return c.cli.ContainerRemove(ctx, id, container.RemoveOptions{Force: force})
 }
+
+// ===== STATS =====
 
 type ContainerStats struct {
 	CPUPercent    float64 `json:"cpu_percent"`
@@ -197,10 +254,12 @@ func (c *Client) GetContainerStats(ctx context.Context, id string) (*ContainerSt
 		return nil, err
 	}
 	defer resp.Body.Close()
+
 	var s types.StatsJSON
 	if err := json.NewDecoder(resp.Body).Decode(&s); err != nil {
 		return nil, err
 	}
+
 	cpuDelta := float64(s.CPUStats.CPUUsage.TotalUsage - s.PreCPUStats.CPUUsage.TotalUsage)
 	sysDelta := float64(s.CPUStats.SystemUsage - s.PreCPUStats.SystemUsage)
 	numCPU := float64(s.CPUStats.OnlineCPUs)
@@ -228,14 +287,27 @@ func (c *Client) GetContainerStats(ctx context.Context, id string) (*ContainerSt
 			blockW += v.Value
 		}
 	}
-	return &ContainerStats{CPUPercent: cpuPct, MemoryUsage: s.MemoryStats.Usage,
-		MemoryLimit: s.MemoryStats.Limit, MemoryPercent: memPct, NetRxBytes: netRx, NetTxBytes: netTx,
-		BlockRead: blockR, BlockWrite: blockW}, nil
+	return &ContainerStats{
+		CPUPercent:    cpuPct,
+		MemoryUsage:   s.MemoryStats.Usage,
+		MemoryLimit:   s.MemoryStats.Limit,
+		MemoryPercent: memPct,
+		NetRxBytes:    netRx,
+		NetTxBytes:    netTx,
+		BlockRead:     blockR,
+		BlockWrite:    blockW,
+	}, nil
 }
+
+// ===== EXEC / TERMINAL =====
 
 func (c *Client) ContainerExecCreate(ctx context.Context, id string, cmd []string) (string, error) {
 	resp, err := c.cli.ContainerExecCreate(ctx, id, types.ExecConfig{
-		Cmd: cmd, AttachStdin: true, AttachStdout: true, AttachStderr: true, Tty: true,
+		Cmd:          cmd,
+		AttachStdin:  true,
+		AttachStdout: true,
+		AttachStderr: true,
+		Tty:          true,
 	})
 	if err != nil {
 		return "", err
@@ -248,8 +320,14 @@ func (c *Client) ContainerExecAttach(ctx context.Context, execID string) (types.
 }
 
 func (c *Client) ResizeTTY(ctx context.Context, execID string, h, w uint) error {
-	return c.cli.ContainerExecResize(ctx, execID, types.ResizeOptions{Height: h, Width: w})
+	// Use container resize - compatible across Docker SDK versions
+	return c.cli.ContainerExecResize(ctx, execID, container.ResizeOptions{
+		Height: h,
+		Width:  w,
+	})
 }
+
+// ===== FILE BROWSER =====
 
 type FileEntry struct {
 	Name    string `json:"name"`
@@ -281,9 +359,12 @@ func (c *Client) ListContainerFiles(ctx context.Context, id, path string) ([]Fil
 			continue
 		}
 		entries = append(entries, FileEntry{
-			Name: name, Path: filepath.Join(path, name), Size: hdr.Size,
-			Mode: hdr.FileInfo().Mode().String(), ModTime: hdr.ModTime.Unix(),
-			IsDir: hdr.Typeflag == tar.TypeDir,
+			Name:    name,
+			Path:    filepath.Join(path, name),
+			Size:    hdr.Size,
+			Mode:    hdr.FileInfo().Mode().String(),
+			ModTime: hdr.ModTime.Unix(),
+			IsDir:   hdr.Typeflag == tar.TypeDir,
 		})
 	}
 	return entries, nil
@@ -300,13 +381,17 @@ func (c *Client) UploadToContainer(ctx context.Context, id, dstPath string, cont
 
 func (c *Client) DeleteContainerFile(ctx context.Context, id, path string) error {
 	exec, err := c.cli.ContainerExecCreate(ctx, id, types.ExecConfig{
-		Cmd: []string{"rm", "-rf", path}, AttachStdout: true, AttachStderr: true,
+		Cmd:          []string{"rm", "-rf", path},
+		AttachStdout: true,
+		AttachStderr: true,
 	})
 	if err != nil {
 		return err
 	}
 	return c.cli.ContainerExecStart(ctx, exec.ID, types.ExecStartCheck{})
 }
+
+// ===== IMAGES =====
 
 type ImageSummary struct {
 	ID       string   `json:"id"`
@@ -326,7 +411,12 @@ func (c *Client) ListImages(ctx context.Context) ([]ImageSummary, error) {
 		if strings.HasPrefix(id, "sha256:") && len(id) > 19 {
 			id = id[7:19]
 		}
-		result = append(result, ImageSummary{ID: id, RepoTags: img.RepoTags, Size: img.Size, Created: img.Created})
+		result = append(result, ImageSummary{
+			ID:       id,
+			RepoTags: img.RepoTags,
+			Size:     img.Size,
+			Created:  img.Created,
+		})
 	}
 	return result, nil
 }
@@ -358,6 +448,8 @@ func (c *Client) GetImageID(ctx context.Context, ref string) (string, error) {
 	return inspect.ID, nil
 }
 
+// ===== NETWORKS =====
+
 type NetworkSummary struct {
 	ID         string `json:"id"`
 	Name       string `json:"name"`
@@ -371,7 +463,10 @@ type NetworkSummary struct {
 }
 
 func (c *Client) ListNetworks(ctx context.Context) ([]NetworkSummary, error) {
-	nets, err := c.cli.NetworkList(ctx, network.ListOptions{})
+	// Use filters.Args for listing - compatible across versions
+	nets, err := c.cli.NetworkList(ctx, types.NetworkListOptions{
+		Filters: filters.NewArgs(),
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -390,16 +485,24 @@ func (c *Client) ListNetworks(ctx context.Context) ([]NetworkSummary, error) {
 			id = id[:12]
 		}
 		result = append(result, NetworkSummary{
-			ID: id, Name: n.Name, Driver: n.Driver, Scope: n.Scope,
-			IPv4: ipv4, IPv6: ipv6, Internal: n.Internal,
-			Created: n.Created.Format(time.RFC3339), Containers: len(n.Containers),
+			ID:         id,
+			Name:       n.Name,
+			Driver:     n.Driver,
+			Scope:      n.Scope,
+			IPv4:       ipv4,
+			IPv6:       ipv6,
+			Internal:   n.Internal,
+			Created:    n.Created.Format(time.RFC3339),
+			Containers: len(n.Containers),
 		})
 	}
 	return result, nil
 }
 
 func (c *Client) CreateNetwork(ctx context.Context, name, driver string) error {
-	_, err := c.cli.NetworkCreate(ctx, name, network.CreateOptions{Driver: driver})
+	_, err := c.cli.NetworkCreate(ctx, name, types.NetworkCreate{
+		Driver: driver,
+	})
 	return err
 }
 
@@ -408,9 +511,11 @@ func (c *Client) RemoveNetwork(ctx context.Context, id string) error {
 }
 
 func (c *Client) PruneNetworks(ctx context.Context) error {
-	_, err := c.cli.NetworksPrune(ctx, filters.Args{})
+	_, err := c.cli.NetworksPrune(ctx, filters.NewArgs())
 	return err
 }
+
+// ===== VOLUMES =====
 
 type VolumeSummary struct {
 	Name       string `json:"name"`
@@ -428,7 +533,11 @@ func (c *Client) ListVolumes(ctx context.Context) ([]VolumeSummary, error) {
 	var result []VolumeSummary
 	for _, v := range resp.Volumes {
 		result = append(result, VolumeSummary{
-			Name: v.Name, Driver: v.Driver, Mountpoint: v.Mountpoint, Scope: v.Scope, Created: v.CreatedAt,
+			Name:       v.Name,
+			Driver:     v.Driver,
+			Mountpoint: v.Mountpoint,
+			Scope:      v.Scope,
+			Created:    v.CreatedAt,
 		})
 	}
 	return result, nil
@@ -444,14 +553,33 @@ func (c *Client) RemoveVolume(ctx context.Context, name string, force bool) erro
 }
 
 func (c *Client) PruneVolumes(ctx context.Context) error {
-	_, err := c.cli.VolumesPrune(ctx, filters.Args{})
+	_, err := c.cli.VolumesPrune(ctx, filters.NewArgs())
 	return err
+}
+
+// ===== LOGS =====
+
+func (c *Client) GetContainerLogs(ctx context.Context, id string, tail string) (io.ReadCloser, error) {
+	return c.cli.ContainerLogs(ctx, id, container.LogsOptions{
+		ShowStdout: true,
+		ShowStderr: true,
+		Follow:     false,
+		Tail:       tail,
+		Timestamps: true,
+	})
 }
 
 func (c *Client) StreamLogs(ctx context.Context, id string) (io.ReadCloser, error) {
 	return c.cli.ContainerLogs(ctx, id, container.LogsOptions{
-		ShowStdout: true, ShowStderr: true, Follow: true, Tail: "200", Timestamps: true,
+		ShowStdout: true,
+		ShowStderr: true,
+		Follow:     true,
+		Tail:       "200",
+		Timestamps: true,
 	})
 }
 
 func (c *Client) GetClient() *client.Client { return c.cli }
+
+// suppress unused import warning
+var _ = dockernetwork.EndpointSettings{}
