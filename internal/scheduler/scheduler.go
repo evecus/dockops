@@ -12,15 +12,17 @@ import (
 )
 
 type Scheduler struct {
-	db      *db.DB
-	cron    *cron.Cron
-	entryID cron.EntryID
+	db       *db.DB
+	dataPath string
+	cron     *cron.Cron
+	entryID  cron.EntryID
 }
 
-func New(database *db.DB) *Scheduler {
+func New(database *db.DB, dataPath string) *Scheduler {
 	return &Scheduler{
-		db:   database,
-		cron: cron.New(),
+		db:       database,
+		dataPath: dataPath,
+		cron:     cron.New(),
 	}
 }
 
@@ -73,7 +75,7 @@ func (s *Scheduler) checkUpdates() {
 	}
 	defer dockerClient.Close()
 
-	mgr := compose.NewManager(s.db)
+	mgr := compose.NewManager(s.db, s.dataPath)
 	containers, err := mgr.GetAllForUpdateCheck()
 	if err != nil {
 		log.Printf("Failed to list containers for update check: %v", err)
