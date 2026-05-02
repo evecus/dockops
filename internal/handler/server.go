@@ -137,11 +137,19 @@ func (s *Server) Run() error {
 				c.JSON(404, gin.H{"error": "not found"})
 				return
 			}
-			// Try static file, fallback to index.html for SPA
-			_, err := fs.Stat(webSub, strings.TrimPrefix(path, "/"))
-			if err != nil {
-				c.Request.URL.Path = "/"
+			// Static assets (js/css/images) - serve directly, never fallback
+			if strings.HasPrefix(path, "/assets/") ||
+				strings.HasSuffix(path, ".js") ||
+				strings.HasSuffix(path, ".css") ||
+				strings.HasSuffix(path, ".png") ||
+				strings.HasSuffix(path, ".ico") ||
+				strings.HasSuffix(path, ".svg") ||
+				strings.HasSuffix(path, ".woff2") {
+				fileServer.ServeHTTP(c.Writer, c.Request)
+				return
 			}
+			// SPA fallback: all other routes serve index.html
+			c.Request.URL.Path = "/"
 			fileServer.ServeHTTP(c.Writer, c.Request)
 		})
 	}
