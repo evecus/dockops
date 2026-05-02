@@ -80,7 +80,7 @@
 import { ref, computed, onMounted } from 'vue'
 import {
   Server, Activity,
-  Cpu, MemoryStick, HardDrive, Container
+  Cpu, MemoryStick, HardDrive, Container, Box
 } from 'lucide-vue-next'
 import api from '@/api'
 
