@@ -73,80 +73,20 @@
       </div>
     </div>
 
-    <!-- Recent containers -->
-    <div class="card">
-      <div class="card-header">
-        <div class="card-title"><Box :size="16" /> 容器概览</div>
-        <div style="display:flex;align-items:center;gap:8px">
-          <button class="btn btn-ghost btn-sm" @click="refreshAll" :disabled="refreshing">
-            <div v-if="refreshing" class="spinner" style="width:12px;height:12px;border-width:2px"></div>
-            <RefreshCw v-else :size="13" />
-            刷新
-          </button>
-          <RouterLink to="/containers" class="btn btn-ghost btn-sm">
-            查看全部 <ChevronRight :size="13" />
-          </RouterLink>
-        </div>
-      </div>
-      <div class="card-body" style="padding:0">
-        <div v-if="!containers.length" class="empty-state">
-          <Box :size="36" />
-          <p>暂无容器，前往容器管理创建</p>
-        </div>
-        <table v-else class="data-table">
-          <thead>
-            <tr>
-              <th>容器名</th>
-              <th>状态</th>
-              <th>端口</th>
-              <th>更新</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="ct in containers.slice(0, 6)" :key="ct.id">
-              <td>
-                <div style="display:flex;align-items:center;gap:8px">
-                  <div class="ct-dot" :class="ct.docker_state === 'running' ? 'running' : 'stopped'"></div>
-                  <span style="font-weight:500">{{ ct.name }}</span>
-                </div>
-              </td>
-              <td>
-                <span class="badge" :class="stateClass(ct.docker_state)">
-                  {{ ct.docker_status || ct.docker_state || '—' }}
-                </span>
-              </td>
-              <td>
-                <span v-if="ct.ports?.length" class="tag">
-                  {{ ct.ports[0]?.host_port }}:{{ ct.ports[0]?.container_port }}
-                </span>
-                <span v-else class="sep">—</span>
-              </td>
-              <td>
-                <span v-if="ct.update_available" class="badge badge-amber">有更新</span>
-                <span v-else class="sep">—</span>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-    </div>
   </div>
 </template>
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
-import { RouterLink } from 'vue-router'
 import {
-  Server, Activity, Box, RefreshCw, ChevronRight,
+  Server, Activity,
   Cpu, MemoryStick, HardDrive, Container
 } from 'lucide-vue-next'
 import api from '@/api'
 
 const info = ref(null)
 const stats = ref(null)
-const containers = ref([])
 const loading = ref(true)
-const refreshing = ref(false)
 const cacheTime = ref(null)
 
 const cacheTimeText = computed(() => {
@@ -193,13 +133,6 @@ function formatBytes(b) {
   return (b / 1e3).toFixed(0) + ' KB'
 }
 
-function stateClass(state) {
-  if (state === 'running') return 'badge-green badge-dot'
-  if (state === 'exited' || state === 'dead') return 'badge-red'
-  if (state === 'paused') return 'badge-amber'
-  return 'badge-muted'
-}
-
 async function loadCached() {
   try {
     const [i, s] = await Promise.all([api.dashboardInfo(), api.dashboardStats()])
@@ -209,28 +142,9 @@ async function loadCached() {
   } catch {}
 }
 
-async function refreshAll() {
-  refreshing.value = true
-  try {
-    const r = await api.dashboardRefresh()
-    if (r.data?.info) info.value = r.data.info
-    if (r.data?.stats) stats.value = r.data.stats
-    cacheTime.value = Date.now()
-    const c = await api.listContainers()
-    containers.value = c.data || []
-  } catch {} finally {
-    refreshing.value = false
-  }
-}
-
 onMounted(async () => {
-  try {
-    await loadCached()
-    const c = await api.listContainers()
-    containers.value = c.data || []
-  } finally {
-    loading.value = false
-  }
+  try { await loadCached() }
+  finally { loading.value = false }
 })
 </script>
 
@@ -270,12 +184,6 @@ onMounted(async () => {
 .breakdown-dot { width: 8px; height: 8px; border-radius: 50%; }
 .breakdown-label { font-size: 12px; color: var(--text-muted); }
 .breakdown-val { font-size: 13px; font-weight: 600; color: var(--text-primary); }
-.ct-dot {
-  width: 7px; height: 7px;
-  border-radius: 50%;
-}
-.ct-dot.running { background: var(--green); box-shadow: 0 0 6px var(--green); }
-.ct-dot.stopped { background: var(--text-muted); }
 .cache-hint {
   font-size: 11px;
   color: var(--text-muted);

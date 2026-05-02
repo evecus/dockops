@@ -37,6 +37,10 @@
           <div class="topbar-breadcrumb" v-if="currentDesc">{{ currentDesc }}</div>
         </div>
         <div class="topbar-actions">
+          <button class="btn btn-ghost btn-sm topbar-refresh" @click="globalRefresh" :disabled="refreshing" title="刷新仪表盘数据">
+            <div v-if="refreshing" class="spinner" style="width:12px;height:12px;border-width:2px"></div>
+            <RefreshCw v-else :size="13" />
+          </button>
           <div class="docker-status" :class="dockerOk ? 'ok' : 'err'">
             <span class="status-dot"></span>
             <span>{{ dockerOk ? 'Docker 已连接' : 'Docker 未连接' }}</span>
@@ -65,12 +69,19 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { RouterLink, RouterView, useRouter, useRoute } from 'vue-router'
-import { LayoutDashboard, Box, Image, Network, Settings, LogOut, User } from 'lucide-vue-next'
+import { LayoutDashboard, Box, Image, Network, Settings, LogOut, User, RefreshCw } from 'lucide-vue-next'
 import api from '@/api'
 
 const router = useRouter()
 const route = useRoute()
 const dockerOk = ref(true)
+const refreshing = ref(false)
+
+async function globalRefresh() {
+  refreshing.value = true
+  try { await api.dashboardRefresh() } catch {}
+  finally { refreshing.value = false }
+}
 
 const navItems = [
   { path: '/dashboard', label: '仪表盘', icon: LayoutDashboard },
@@ -107,6 +118,12 @@ onMounted(async () => {
 <style scoped>
 .topbar-left { display: flex; flex-direction: column; gap: 2px; }
 .topbar-breadcrumb { font-size: 11.5px; color: var(--text-muted); }
+.topbar-refresh {
+  padding: 5px 8px;
+  border-radius: 99px;
+  color: var(--text-muted);
+}
+.topbar-refresh:hover { color: var(--accent); }
 .docker-status {
   display: flex; align-items: center; gap: 6px;
   padding: 5px 12px;

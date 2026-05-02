@@ -41,6 +41,7 @@
             <span class="badge" :class="badgeClass(ct.docker_state)">
               {{ stateLabel(ct.docker_state) }}
             </span>
+            <span v-if="ct.docker_status" class="ct-status-text">{{ ct.docker_status }}</span>
           </div>
         </div>
 
@@ -363,4 +364,10 @@ onMounted(load)
 }
 .btn-danger-icon { color: var(--red) !important; }
 .btn-danger-icon:hover { background: rgba(240,84,100,0.1) !important; border-color: rgba(240,84,100,0.25) !important; }
+.ct-status-text {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  white-space: nowrap;
+}
 </style>
