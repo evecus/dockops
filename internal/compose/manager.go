@@ -124,12 +124,27 @@ func (m *Manager) CreateContainer(req *CreateRequest) (*ContainerRecord, error) 
 	return m.GetContainer(id)
 }
 
-// stopAndRemoveByName forcefully stops and removes a Docker container by name.
-// This is needed when taking over an external container that still occupies ports.
+// stopAndRemoveByName forcefully stops and removes a Docker container by name,
+// and also removes any container sharing the same compose project label —
+// this covers cases where the container was started by docker compose and has
+// an auto-generated name like "<project>-<service>-<N>".
 // All errors are ignored (best-effort).
 func stopAndRemoveByName(name string) {
+	// Direct stop/rm by the recorded name
 	exec.Command("docker", "stop", name).Run()
 	exec.Command("docker", "rm", "-f", name).Run()
+
+	// Also find and remove containers whose compose project matches `name`
+	// (handles "sublink-sublink-1" style names where project == "sublink")
+	out, err := exec.Command("docker", "ps", "-a",
+		"--filter", "label=com.docker.compose.project="+name,
+		"--format", "{{.Names}}").Output()
+	if err == nil {
+		for _, cname := range strings.Fields(string(out)) {
+			exec.Command("docker", "stop", cname).Run()
+			exec.Command("docker", "rm", "-f", cname).Run()
+		}
+	}
 }
 
 func (m *Manager) UpdateContainer(id string, req *CreateRequest) error {
@@ -143,6 +158,11 @@ func (m *Manager) UpdateContainer(id string, req *CreateRequest) error {
 	// before we bring up the new compose stack.
 	if record.Source == "external" {
 		stopAndRemoveByName(record.Name)
+		// Also stop by the user-supplied name in case it differs from the recorded name
+		// (e.g. record.Name="sublink-sublink-1", req.Name="sublink")
+		if req.Name != "" && req.Name != record.Name {
+			stopAndRemoveByName(req.Name)
+		}
 	}
 
 	// Stop existing stack (best-effort; external containers may have no compose file)
@@ -197,6 +217,13 @@ func (m *Manager) RegisterExternal(name string) (*ContainerRecord, error) {
 		return nil, err
 	}
 	return m.GetContainer(id)
+}
+
+// DeleteContainerRecord removes only the DB record without touching Docker or the compose file.
+// Used to clean up stale external entries that no longer have a running container.
+func (m *Manager) DeleteContainerRecord(id string) error {
+	_, err := m.db.Exec(`DELETE FROM containers WHERE id = ?`, id)
+	return err
 }
 
 func (m *Manager) DeleteContainer(id string) error {
