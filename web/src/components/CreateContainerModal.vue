@@ -1,24 +1,14 @@
 <template>
   <div class="modal modal-xl">
     <div class="modal-header">
-      <div class="modal-title">
-        <component :is="editing ? Pencil : Plus" :size="16" />
-        {{ editing ? '编辑容器' : '创建容器' }}
-      </div>
+      <div class="modal-title"><Plus :size="16" /> 创建容器</div>
       <button class="modal-close" @click="$emit('close')"><X :size="15" /></button>
     </div>
 
     <div class="modal-body" style="padding:0">
       <div class="create-layout">
-        <!-- Left: basic info + mode selector -->
+        <!-- Left: mode selector -->
         <div class="create-sidebar">
-          <div class="sidebar-section">
-            <div class="form-group">
-              <label class="form-label">容器名称 *</label>
-              <input v-model="form.name" class="form-input" placeholder="my-app" required />
-            </div>
-          </div>
-
           <div class="sidebar-section">
             <div class="form-label" style="margin-bottom:8px">创建方式</div>
             <div class="mode-list">
@@ -35,8 +25,9 @@
           </div>
         </div>
 
-        <!-- Right: content based on mode -->
+        <!-- Right: content -->
         <div class="create-main">
+
           <!-- Upload mode -->
           <div v-if="mode === 'upload'" class="mode-panel">
             <div class="upload-zone" :class="{ dragging }"
@@ -50,24 +41,25 @@
                 <input type="file" accept=".yml,.yaml" @change="onFileSelect" style="display:none" />
               </label>
             </div>
-            <div v-if="form.compose_content" class="compose-preview">
+            <div v-if="composeContent" class="compose-preview">
               <div class="compose-preview-header">
                 <span>预览</span>
-                <button class="btn btn-ghost btn-sm" @click="form.compose_content=''">清空</button>
+                <button class="btn btn-ghost btn-sm" @click="composeContent=''">清空</button>
               </div>
-              <pre class="code-block" style="max-height:300px">{{ form.compose_content }}</pre>
+              <pre class="code-block" style="max-height:300px">{{ composeContent }}</pre>
             </div>
           </div>
 
           <!-- Paste mode -->
           <div v-if="mode === 'paste'" class="mode-panel">
             <label class="form-label">粘贴 Compose 内容</label>
-            <textarea v-model="form.compose_content" class="form-textarea"
+            <textarea v-model="composeContent" class="form-textarea"
               style="min-height:400px;font-size:12.5px"
               placeholder="version: '3.8'
 services:
   app:
     image: nginx:latest
+    container_name: my-nginx
     ports:
       - '80:80'
     restart: unless-stopped"></textarea>
@@ -87,15 +79,21 @@ services:
             <div v-if="parsedYaml" class="compose-preview">
               <div class="compose-preview-header">
                 <span>生成的 Compose 配置（可编辑）</span>
-                <button class="btn btn-ghost btn-sm" @click="parsedYaml=''">重新解析</button>
+                <button class="btn btn-ghost btn-sm" @click="parsedYaml='';composeContent=''">重新解析</button>
               </div>
               <textarea v-model="parsedYaml" class="form-textarea" style="min-height:280px;font-size:12.5px"
-                @input="form.compose_content = parsedYaml"></textarea>
+                @input="composeContent = parsedYaml"></textarea>
             </div>
           </div>
 
           <!-- Form mode -->
           <div v-if="mode === 'form'" class="mode-panel">
+            <!-- Container name in form mode -->
+            <div class="form-group">
+              <label class="form-label">容器名称 *</label>
+              <input v-model="formName" class="form-input" placeholder="my-app" />
+            </div>
+
             <div class="form-tabs">
               <div class="tabs">
                 <div v-for="t in formTabs" :key="t.id" class="tab" :class="{ active: formTab === t.id }" @click="formTab = t.id">
@@ -104,7 +102,6 @@ services:
               </div>
             </div>
 
-            <!-- Basic tab -->
             <div v-if="formTab === 'basic'" class="tab-content">
               <div class="grid-2">
                 <div class="form-group">
@@ -133,7 +130,6 @@ services:
               </div>
             </div>
 
-            <!-- Ports tab -->
             <div v-if="formTab === 'ports'" class="tab-content">
               <div class="list-editor">
                 <div v-for="(p, i) in formFields.ports" :key="i" class="list-row">
@@ -144,7 +140,6 @@ services:
               </div>
             </div>
 
-            <!-- Volumes tab -->
             <div v-if="formTab === 'volumes'" class="tab-content">
               <div class="list-editor">
                 <div v-for="(v, i) in formFields.volumes" :key="i" class="list-row">
@@ -155,7 +150,6 @@ services:
               </div>
             </div>
 
-            <!-- Env tab -->
             <div v-if="formTab === 'env'" class="tab-content">
               <div class="list-editor">
                 <div v-for="(e, i) in formFields.env" :key="i" class="list-row">
@@ -166,7 +160,6 @@ services:
               </div>
             </div>
 
-            <!-- Command tab -->
             <div v-if="formTab === 'cmd'" class="tab-content">
               <div class="form-group">
                 <label class="form-label">启动命令</label>
@@ -204,36 +197,34 @@ services:
       <button class="btn btn-ghost" @click="$emit('close')">取消</button>
       <button class="btn btn-primary" @click="submit" :disabled="submitting">
         <div v-if="submitting" class="spinner" style="width:13px;height:13px;border-width:2px"></div>
-        {{ editing ? '保存并重启' : '创建并启动' }}
+        创建并启动
       </button>
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref, computed, watch, onMounted } from 'vue'
-import { X, Plus, Upload, Wand2, RefreshCw, Pencil, FileText, ClipboardPaste, Terminal, Settings2 } from 'lucide-vue-next'
+import { ref, computed } from 'vue'
+import { X, Plus, Upload, ClipboardPaste, Terminal, Settings2, RefreshCw, Wand2 } from 'lucide-vue-next'
 import api from '@/api'
 import { useToastStore } from '@/stores/toast'
 
-const props = defineProps({ editing: Object })
 const emit = defineEmits(['close', 'created'])
 const toast = useToastStore()
 
-const mode = ref('paste')
-const runCmd = ref('')
-const parsedYaml = ref('')
-const parsing = ref(false)
+const mode = ref('upload')
 const submitting = ref(false)
 const dragging = ref(false)
+const parsing = ref(false)
+const runCmd = ref('')
+const parsedYaml = ref('')
 const formTab = ref('basic')
 
-const form = ref({
-  name: '',
-  create_mode: 'paste',
-  compose_content: ''
-})
+// Shared compose content for upload/paste/run modes
+const composeContent = ref('')
 
+// Form mode only
+const formName = ref('')
 const formFields = ref({
   image: '', restart: 'unless-stopped', hostname: '', privileged: false,
   ports: [], volumes: [], env: [], command: '', entrypoint: '', user: '', network_mode: ''
@@ -257,7 +248,7 @@ const formTabs = [
 const generatedYaml = computed(() => {
   if (mode.value !== 'form' || !formFields.value.image) return ''
   const f = formFields.value
-  const name = form.value.name || f.image.split('/').pop().split(':')[0] || 'app'
+  const name = formName.value || f.image.split('/').pop().split(':')[0] || 'app'
   let y = `version: '3.8'\n\nservices:\n  ${name}:\n    image: ${f.image}\n    container_name: ${name}\n`
   if (f.restart) y += `    restart: ${f.restart}\n`
   if (f.hostname) y += `    hostname: ${f.hostname}\n`
@@ -275,23 +266,18 @@ const generatedYaml = computed(() => {
   return y
 })
 
-watch(generatedYaml, val => { if (mode.value === 'form') form.value.compose_content = val })
-watch(mode, m => { form.value.create_mode = m })
-
 function onDrop(e) {
   dragging.value = false
   const file = e.dataTransfer.files[0]
   if (file) readFile(file)
 }
-
 function onFileSelect(e) {
   const file = e.target.files[0]
   if (file) readFile(file)
 }
-
 function readFile(file) {
   const reader = new FileReader()
-  reader.onload = e => { form.value.compose_content = e.target.result }
+  reader.onload = e => { composeContent.value = e.target.result }
   reader.readAsText(file)
 }
 
@@ -301,63 +287,51 @@ async function parseRun() {
   try {
     const res = await api.parseDockerRun(runCmd.value.trim())
     parsedYaml.value = res.data.yaml
-    form.value.compose_content = parsedYaml.value
-    if (!form.value.name && res.data.service?.container_name) {
-      form.value.name = res.data.service.container_name
-    }
+    composeContent.value = parsedYaml.value
     toast.success('解析成功')
   } catch (e) { toast.error('解析失败: ' + e) }
   finally { parsing.value = false }
 }
 
 async function submit() {
-  if (!form.value.name) { toast.error('请填写容器名称'); return }
-  if (!form.value.compose_content) { toast.error('请填写 Compose 内容'); return }
-
-  submitting.value = true
-  try {
-    if (props.editing) {
-      await api.updateContainer(props.editing.id, form.value)
-      toast.success('容器已更新')
-    } else {
-      await api.createContainer(form.value)
+  if (mode.value === 'form') {
+    if (!formFields.value.image) { toast.error('请填写镜像'); return }
+    const content = generatedYaml.value
+    // name is embedded in the yaml via container_name, also pass explicitly
+    const name = formName.value || formFields.value.image.split('/').pop().split(':')[0] || 'app'
+    submitting.value = true
+    try {
+      await api.createContainer({ name, compose_content: content })
       toast.success('容器已创建并启动')
-    }
-    emit('created')
-  } catch (e) { toast.error(typeof e === 'string' ? e : '操作失败') }
-  finally { submitting.value = false }
-}
-
-onMounted(() => {
-  if (props.editing) {
-    form.value.name = props.editing.name
-    form.value.create_mode = props.editing.create_mode || 'paste'
-    form.value.compose_content = props.editing.compose_content || ''
-    mode.value = props.editing.create_mode || 'paste'
+      emit('created')
+    } catch (e) { toast.error(typeof e === 'string' ? e : '操作失败') }
+    finally { submitting.value = false }
+  } else {
+    // upload / paste / run — name comes from compose content
+    if (!composeContent.value.trim()) { toast.error('请提供 Compose 内容'); return }
+    submitting.value = true
+    try {
+      // Don't pass name — backend extracts it from compose content
+      await api.createContainer({ compose_content: composeContent.value })
+      toast.success('容器已创建并启动')
+      emit('created')
+    } catch (e) { toast.error(typeof e === 'string' ? e : '操作失败') }
+    finally { submitting.value = false }
   }
-})
+}
 </script>
 
 <style scoped>
 .create-layout { display: flex; min-height: 520px; }
 .create-sidebar {
-  width: 240px;
-  border-right: 1px solid var(--border);
-  padding: 20px;
-  display: flex;
-  flex-direction: column;
-  gap: 20px;
-  flex-shrink: 0;
+  width: 200px; border-right: 1px solid var(--border); padding: 20px;
+  display: flex; flex-direction: column; gap: 20px; flex-shrink: 0;
 }
 .sidebar-section { display: flex; flex-direction: column; gap: 12px; }
-.form-hint { font-size: 11px; color: var(--text-muted); margin-top: 3px; }
 .mode-list { display: flex; flex-direction: column; gap: 3px; }
 .mode-item {
-  display: flex; align-items: center; gap: 10px;
-  padding: 8px 10px;
-  border-radius: var(--radius);
-  cursor: pointer;
-  transition: all var(--transition);
+  display: flex; align-items: center; gap: 10px; padding: 8px 10px;
+  border-radius: var(--radius); cursor: pointer; transition: all var(--transition);
   border: 1px solid transparent;
 }
 .mode-item:hover { background: var(--accent-dim); }
@@ -365,70 +339,35 @@ onMounted(() => {
 .mode-name { font-size: 12.5px; font-weight: 500; }
 .mode-desc { font-size: 11px; color: var(--text-muted); }
 .mode-item.active .mode-desc { color: var(--accent); opacity: 0.7; }
-
 .create-main { flex: 1; overflow: hidden; }
 .mode-panel { padding: 20px; height: 100%; overflow-y: auto; display: flex; flex-direction: column; gap: 14px; }
-
 .upload-zone {
-  border: 2px dashed var(--border-2);
-  border-radius: var(--radius-lg);
-  padding: 40px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  transition: all var(--transition);
-  text-align: center;
-  min-height: 200px;
+  border: 2px dashed var(--border-2); border-radius: var(--radius-lg); padding: 40px;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  transition: all var(--transition); text-align: center; min-height: 200px;
 }
 .upload-zone.dragging { border-color: var(--accent); background: var(--accent-dim); }
 .compose-preview { display: flex; flex-direction: column; gap: 8px; }
 .compose-preview-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  font-size: 12px;
-  color: var(--text-muted);
-  font-weight: 500;
+  display: flex; justify-content: space-between; align-items: center;
+  font-size: 12px; color: var(--text-muted); font-weight: 500;
 }
 .form-tabs { margin-bottom: 4px; }
 .tab-content { padding: 14px 0; display: flex; flex-direction: column; gap: 14px; }
 .list-editor { display: flex; flex-direction: column; gap: 6px; }
 .list-row { display: flex; align-items: center; gap: 6px; }
-
 .yaml-preview-bar {
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
-  padding: 12px 24px;
-  background: var(--bg-base);
-  border-top: 1px solid var(--border);
-  max-height: 160px;
-  overflow: hidden;
+  display: flex; align-items: flex-start; gap: 12px; padding: 12px 24px;
+  background: var(--bg-base); border-top: 1px solid var(--border); max-height: 160px; overflow: hidden;
 }
 .yaml-preview-code {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  color: var(--text-code);
-  overflow-y: auto;
-  max-height: 140px;
-  flex: 1;
-  white-space: pre;
+  font-family: var(--font-mono); font-size: 11px; color: var(--text-code);
+  overflow-y: auto; max-height: 140px; flex: 1; white-space: pre;
 }
 .spin { animation: spin 0.8s linear infinite; }
-
 @media (max-width: 768px) {
-  .create-layout {
-    flex-direction: column;
-    min-height: unset;
-  }
-  .create-sidebar {
-    width: 100%;
-    border-right: none;
-    border-bottom: 1px solid var(--border);
-    padding: 14px;
-    gap: 14px;
-  }
+  .create-layout { flex-direction: column; min-height: unset; }
+  .create-sidebar { width: 100%; border-right: none; border-bottom: 1px solid var(--border); padding: 14px; gap: 14px; }
   .mode-list { flex-direction: row; flex-wrap: wrap; gap: 6px; }
   .mode-item { flex: 1; min-width: 80px; flex-direction: column; text-align: center; padding: 8px 6px; gap: 4px; }
   .mode-panel { padding: 14px; }

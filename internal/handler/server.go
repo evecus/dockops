@@ -288,10 +288,12 @@ func (s *Server) listContainers(c *gin.Context) {
 	ok(c, result)
 }
 
-// createContainer creates a new container. Name must not conflict with any existing container.
+// createContainer creates a new container.
+// For form mode, name is provided explicitly.
+// For upload/paste/run modes, name is extracted from the compose content.
 func (s *Server) createContainer(c *gin.Context) {
 	var req struct {
-		Name           string `json:"name" binding:"required"`
+		Name           string `json:"name"`
 		ComposeContent string `json:"compose_content" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -299,23 +301,29 @@ func (s *Server) createContainer(c *gin.Context) {
 		return
 	}
 
-	// Validate name does not conflict with existing containers
-	if compose.ContainerExists(req.Name) {
-		fail(c, 400, fmt.Sprintf("container '%s' already exists", req.Name))
+	// If name not provided, extract from compose content
+	name := strings.TrimSpace(req.Name)
+	if name == "" {
+		name = compose.ExtractNameFromCompose(req.ComposeContent)
+	}
+	if name == "" {
+		fail(c, 400, "cannot determine container name from compose content")
 		return
 	}
 
-	if err := s.compose.WriteCompose(req.Name, req.ComposeContent); err != nil {
+	if err := s.compose.WriteCompose(name, req.ComposeContent); err != nil {
 		fail(c, 500, err.Error())
 		return
 	}
 
-	if err := s.compose.Up(req.Name); err != nil {
+	if err := s.compose.Up(name); err != nil {
+		// Clean up compose dir if start failed
+		s.compose.RemoveComposeDir(name)
 		fail(c, 500, "Container created but failed to start: "+err.Error())
 		return
 	}
 
-	ok(c, gin.H{"message": "created", "name": req.Name})
+	ok(c, gin.H{"message": "created", "name": name})
 }
 
 func (s *Server) parseDockerRun(c *gin.Context) {

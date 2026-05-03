@@ -182,6 +182,37 @@ func filterEmpty(ss []string) []string {
 	return out
 }
 
+// ExtractNameFromCompose extracts the container name from compose YAML.
+// It prefers container_name if set, otherwise falls back to the first service name.
+func ExtractNameFromCompose(content string) string {
+	var firstService string
+	inServices := false
+	for _, line := range strings.Split(content, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "services:" {
+			inServices = true
+			continue
+		}
+		if !inServices {
+			continue
+		}
+		// container_name takes priority
+		if strings.HasPrefix(trimmed, "container_name:") {
+			val := strings.TrimSpace(strings.TrimPrefix(trimmed, "container_name:"))
+			val = strings.Trim(val, "\"'")
+			if val != "" {
+				return val
+			}
+		}
+		// Capture first service name (indented key ending with colon, no sub-indent)
+		if firstService == "" && strings.HasSuffix(trimmed, ":") &&
+			!strings.Contains(trimmed, " ") && len(line)-len(strings.TrimLeft(line, " \t")) > 0 {
+			firstService = strings.TrimSuffix(trimmed, ":")
+		}
+	}
+	return firstService
+}
+
 // ExtractImageFromCompose extracts image names from compose YAML content.
 func ExtractImageFromCompose(content string) []string {
 	var images []string
