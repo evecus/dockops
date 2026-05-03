@@ -124,10 +124,25 @@ func (m *Manager) CreateContainer(req *CreateRequest) (*ContainerRecord, error) 
 	return m.GetContainer(id)
 }
 
+// stopAndRemoveByName forcefully stops and removes a Docker container by name.
+// This is needed when taking over an external container that still occupies ports.
+// All errors are ignored (best-effort).
+func stopAndRemoveByName(name string) {
+	exec.Command("docker", "stop", name).Run()
+	exec.Command("docker", "rm", "-f", name).Run()
+}
+
 func (m *Manager) UpdateContainer(id string, req *CreateRequest) error {
 	record, err := m.GetContainer(id)
 	if err != nil {
 		return err
+	}
+
+	// For external containers, composeDown is a no-op (no compose file exists yet).
+	// Forcefully stop and remove the raw Docker container so its ports are freed
+	// before we bring up the new compose stack.
+	if record.Source == "external" {
+		stopAndRemoveByName(record.Name)
 	}
 
 	// Stop existing stack (best-effort; external containers may have no compose file)
@@ -190,6 +205,9 @@ func (m *Manager) DeleteContainer(id string) error {
 		return err
 	}
 
+	if record.Source == "external" {
+		stopAndRemoveByName(record.Name)
+	}
 	m.composeDown(record.ComposeDir)
 
 	_, err = m.db.Exec(`DELETE FROM containers WHERE id = ?`, id)
