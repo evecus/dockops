@@ -6,13 +6,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/dockops/dockops/internal/compose"
 	"github.com/dockops/dockops/internal/db"
 	"github.com/dockops/dockops/internal/docker"
 	"github.com/robfig/cron/v3"
 )
 
-// DashboardCache holds the latest collected dashboard data.
 type DashboardCache struct {
 	Info      interface{}
 	Stats     interface{}
@@ -36,31 +34,20 @@ func (c *DashboardCache) Get() (info, stats interface{}, updatedAt time.Time) {
 
 type Scheduler struct {
 	db             *db.DB
-	dataPath       string
 	cron           *cron.Cron
-	updateEntryID  cron.EntryID
 	collectEntryID cron.EntryID
 	Cache          *DashboardCache
 }
 
-func New(database *db.DB, dataPath string) *Scheduler {
+func New(database *db.DB) *Scheduler {
 	return &Scheduler{
-		db:       database,
-		dataPath: dataPath,
-		cron:     cron.New(),
-		Cache:    &DashboardCache{},
+		db:    database,
+		cron:  cron.New(),
+		Cache: &DashboardCache{},
 	}
 }
 
 func (s *Scheduler) Start() {
-	updateInterval, err := s.db.GetSetting("update_check_interval")
-	if err != nil || updateInterval == "" {
-		updateInterval = "6h"
-	}
-	if updateInterval != "off" {
-		s.scheduleUpdateCheck(updateInterval)
-	}
-
 	collectInterval, err := s.db.GetSetting("collect_interval")
 	if err != nil || collectInterval == "" {
 		collectInterval = "10m"
@@ -68,27 +55,12 @@ func (s *Scheduler) Start() {
 	if collectInterval != "off" {
 		s.scheduleCollect(collectInterval)
 	}
-
 	s.cron.Start()
 	go s.collectDashboard()
 }
 
 func (s *Scheduler) Stop() {
 	s.cron.Stop()
-}
-
-func (s *Scheduler) UpdateInterval(interval string) error {
-	if err := s.db.SetSetting("update_check_interval", interval); err != nil {
-		return err
-	}
-	if s.updateEntryID != 0 {
-		s.cron.Remove(s.updateEntryID)
-		s.updateEntryID = 0
-	}
-	if interval != "off" {
-		s.scheduleUpdateCheck(interval)
-	}
-	return nil
 }
 
 func (s *Scheduler) UpdateCollectInterval(interval string) error {
@@ -105,16 +77,6 @@ func (s *Scheduler) UpdateCollectInterval(interval string) error {
 	return nil
 }
 
-func (s *Scheduler) scheduleUpdateCheck(interval string) {
-	spec := updateIntervalToSpec(interval)
-	id, err := s.cron.AddFunc(spec, func() { s.checkUpdates() })
-	if err != nil {
-		log.Printf("Failed to schedule update check: %v", err)
-		return
-	}
-	s.updateEntryID = id
-}
-
 func (s *Scheduler) scheduleCollect(interval string) {
 	spec := collectIntervalToSpec(interval)
 	id, err := s.cron.AddFunc(spec, func() { s.collectDashboard() })
@@ -123,10 +85,6 @@ func (s *Scheduler) scheduleCollect(interval string) {
 		return
 	}
 	s.collectEntryID = id
-}
-
-func (s *Scheduler) CheckNow() {
-	go s.checkUpdates()
 }
 
 func (s *Scheduler) CollectNow() {
@@ -178,69 +136,6 @@ func (s *Scheduler) collectDashboard() {
 
 	s.Cache.Set(info, statsData)
 	log.Println("Dashboard data collected and cached")
-}
-
-func (s *Scheduler) checkUpdates() {
-	log.Println("Checking for container image updates...")
-	dockerClient, err := docker.NewClient()
-	if err != nil {
-		log.Printf("Failed to create docker client for update check: %v", err)
-		return
-	}
-	defer dockerClient.Close()
-
-	mgr := compose.NewManager(s.db, s.dataPath)
-	containers, err := mgr.GetAllForUpdateCheck()
-	if err != nil {
-		log.Printf("Failed to list containers for update check: %v", err)
-		return
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
-	defer cancel()
-
-	for _, ct := range containers {
-		images := compose.ExtractImageFromCompose(ct.ComposeContent)
-		for _, img := range images {
-			localID, err := dockerClient.GetImageID(ctx, img)
-			if err != nil {
-				continue
-			}
-			reader, err := dockerClient.StreamPullImage(ctx, img)
-			if err != nil {
-				continue
-			}
-			buf := make([]byte, 4096)
-			for {
-				_, err := reader.Read(buf)
-				if err != nil {
-					break
-				}
-			}
-			reader.Close()
-			remoteID, err := dockerClient.GetImageID(ctx, img)
-			if err != nil {
-				continue
-			}
-			mgr.SetUpdateAvailable(ct.ID, remoteID != localID)
-		}
-	}
-	log.Println("Update check complete")
-}
-
-func updateIntervalToSpec(d string) string {
-	switch d {
-	case "1h":
-		return "0 * * * *"
-	case "6h":
-		return "0 */6 * * *"
-	case "12h":
-		return "0 */12 * * *"
-	case "24h":
-		return "0 0 * * *"
-	default:
-		return "0 */6 * * *"
-	}
 }
 
 func collectIntervalToSpec(d string) string {

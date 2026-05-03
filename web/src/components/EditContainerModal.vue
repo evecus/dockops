@@ -1,9 +1,7 @@
 <template>
   <div class="modal modal-xl">
     <div class="modal-header">
-      <div class="modal-title">
-        <Pencil :size="16" /> 编辑容器
-      </div>
+      <div class="modal-title"><Pencil :size="16" /> 编辑容器</div>
       <button class="modal-close" @click="$emit('close')"><X :size="15" /></button>
     </div>
 
@@ -12,15 +10,8 @@
     </div>
 
     <template v-else>
-      <!-- External container notice -->
-      <div v-if="isExternal" class="external-notice">
-        <Info :size="14" />
-        此容器由外部创建，编辑后将由 DockOps 接管管理
-      </div>
-
       <div class="modal-body" style="padding:0">
         <div class="edit-layout">
-          <!-- Left: name -->
           <div class="edit-sidebar">
             <div class="form-group">
               <label class="form-label">容器名称 *</label>
@@ -28,7 +19,6 @@
             </div>
           </div>
 
-          <!-- Right: tabs -->
           <div class="edit-main">
             <div class="form-tabs">
               <div class="tabs">
@@ -38,7 +28,6 @@
               </div>
             </div>
 
-            <!-- Basic -->
             <div v-if="activeTab === 'basic'" class="tab-content">
               <div class="grid-2">
                 <div class="form-group">
@@ -67,7 +56,6 @@
               </div>
             </div>
 
-            <!-- Ports -->
             <div v-if="activeTab === 'ports'" class="tab-content">
               <div class="list-editor">
                 <div v-for="(p, i) in fields.ports" :key="i" class="list-row">
@@ -78,7 +66,6 @@
               </div>
             </div>
 
-            <!-- Volumes -->
             <div v-if="activeTab === 'volumes'" class="tab-content">
               <div class="list-editor">
                 <div v-for="(v, i) in fields.volumes" :key="i" class="list-row">
@@ -89,7 +76,6 @@
               </div>
             </div>
 
-            <!-- Env -->
             <div v-if="activeTab === 'env'" class="tab-content">
               <div class="list-editor">
                 <div v-for="(e, i) in fields.env" :key="i" class="list-row">
@@ -100,7 +86,6 @@
               </div>
             </div>
 
-            <!-- Advanced -->
             <div v-if="activeTab === 'advanced'" class="tab-content">
               <div class="form-group">
                 <label class="form-label">启动命令</label>
@@ -127,7 +112,6 @@
         </div>
       </div>
 
-      <!-- Generated YAML preview -->
       <div v-if="generatedYaml" class="yaml-preview-bar">
         <span class="form-label" style="flex-shrink:0">Compose 预览:</span>
         <pre class="yaml-preview-code">{{ generatedYaml }}</pre>
@@ -137,7 +121,7 @@
         <button class="btn btn-ghost" @click="$emit('close')">取消</button>
         <button class="btn btn-primary" @click="submit" :disabled="submitting">
           <div v-if="submitting" class="spinner" style="width:13px;height:13px;border-width:2px"></div>
-          {{ isExternal ? '接管并启动' : '保存并重启' }}
+          保存并重启
         </button>
       </div>
     </template>
@@ -146,7 +130,7 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
-import { X, Plus, Pencil, Info } from 'lucide-vue-next'
+import { X, Plus, Pencil } from 'lucide-vue-next'
 import api from '@/api'
 import { useToastStore } from '@/stores/toast'
 
@@ -156,9 +140,10 @@ const toast = useToastStore()
 
 const loading = ref(true)
 const submitting = ref(false)
-const isExternal = ref(false)
 const activeTab = ref('basic')
 
+// oldName is the current docker container name, used as the URL param
+const oldName = ref('')
 const form = ref({ name: '' })
 const fields = ref({
   image: '', restart: 'unless-stopped', hostname: '', privileged: false,
@@ -200,12 +185,13 @@ async function submit() {
 
   submitting.value = true
   try {
-    await api.updateContainer(props.container.id, {
+    // Pass oldName as URL param so backend knows which docker container to stop.
+    // Pass newName in body so backend knows what to create.
+    await api.updateContainer(oldName.value, {
       name: form.value.name,
-      create_mode: 'form',
       compose_content: generatedYaml.value,
     })
-    toast.success(isExternal.value ? '容器已接管并启动' : '容器已更新')
+    toast.success('容器已更新')
     emit('saved')
   } catch (e) {
     toast.error(typeof e === 'string' ? e : '操作失败')
@@ -215,11 +201,13 @@ async function submit() {
 }
 
 onMounted(async () => {
+  // props.container.name is the actual docker container name
+  oldName.value = props.container.name
   try {
-    const res = await api.getContainerFormData(props.container.id)
+    const res = await api.getContainerFormData(props.container.name)
     const data = res.data
+    // Backend returns name = docker container name from inspect
     form.value.name = data.name
-    isExternal.value = data.source === 'external'
     const f = data.fields || {}
     fields.value = {
       image: f.image || '',
@@ -243,56 +231,25 @@ onMounted(async () => {
 </script>
 
 <style scoped>
-.external-notice {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 10px 20px;
-  background: rgba(245, 158, 11, 0.08);
-  border-bottom: 1px solid rgba(245, 158, 11, 0.2);
-  color: #f59e0b;
-  font-size: 13px;
-}
 .edit-layout { display: flex; min-height: 480px; }
-.edit-sidebar {
-  width: 200px;
-  border-right: 1px solid var(--border);
-  padding: 20px;
-  flex-shrink: 0;
-}
+.edit-sidebar { width: 200px; border-right: 1px solid var(--border); padding: 20px; flex-shrink: 0; }
 .edit-main { flex: 1; overflow: hidden; }
 .form-tabs { padding: 16px 20px 0; }
 .tab-content { padding: 16px 20px; display: flex; flex-direction: column; gap: 14px; }
 .list-editor { display: flex; flex-direction: column; gap: 6px; }
 .list-row { display: flex; align-items: center; gap: 6px; }
 .yaml-preview-bar {
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
-  padding: 12px 24px;
-  background: var(--bg-base);
-  border-top: 1px solid var(--border);
-  max-height: 160px;
-  overflow: hidden;
+  display: flex; align-items: flex-start; gap: 12px; padding: 12px 24px;
+  background: var(--bg-base); border-top: 1px solid var(--border);
+  max-height: 160px; overflow: hidden;
 }
 .yaml-preview-code {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  color: var(--text-code);
-  overflow-y: auto;
-  max-height: 140px;
-  flex: 1;
-  white-space: pre;
+  font-family: var(--font-mono); font-size: 11px; color: var(--text-code);
+  overflow-y: auto; max-height: 140px; flex: 1; white-space: pre;
 }
-
 @media (max-width: 768px) {
   .edit-layout { flex-direction: column; min-height: unset; }
-  .edit-sidebar {
-    width: 100%;
-    border-right: none;
-    border-bottom: 1px solid var(--border);
-    padding: 12px 14px;
-  }
+  .edit-sidebar { width: 100%; border-right: none; border-bottom: 1px solid var(--border); padding: 12px 14px; }
   .edit-main { overflow: visible; }
   .form-tabs { padding: 12px 14px 0; }
   .tab-content { padding: 12px 14px; }

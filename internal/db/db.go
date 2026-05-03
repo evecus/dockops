@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	_ "github.com/glebarez/sqlite" // pure-Go SQLite, no CGO required
+	_ "github.com/glebarez/sqlite"
 )
 
 type DB struct {
@@ -14,17 +14,14 @@ type DB struct {
 
 func Init(dataPath string) (*DB, error) {
 	dbPath := filepath.Join(dataPath, "dockops.db")
-	// glebarez/sqlite uses "sqlite" driver name, WAL mode via pragma
 	sqlDB, err := sql.Open("sqlite", dbPath+"?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)")
 	if err != nil {
 		return nil, err
 	}
-
 	database := &DB{sqlDB}
 	if err := database.migrate(); err != nil {
 		return nil, err
 	}
-
 	return database, nil
 }
 
@@ -36,34 +33,18 @@ func (d *DB) migrate() error {
 			password_hash TEXT NOT NULL,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		)`,
-		`CREATE TABLE IF NOT EXISTS containers (
-			id TEXT PRIMARY KEY,
-			name TEXT NOT NULL,
-			compose_dir TEXT NOT NULL,
-			create_mode TEXT NOT NULL,
-			compose_content TEXT,
-			docker_id TEXT,
-			update_available INTEGER DEFAULT 0,
-			source TEXT NOT NULL DEFAULT 'dockops',
-			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-		)`,
-	`ALTER TABLE containers ADD COLUMN source TEXT NOT NULL DEFAULT 'dockops'`,
 		`CREATE TABLE IF NOT EXISTS settings (
 			key TEXT PRIMARY KEY,
 			value TEXT NOT NULL
 		)`,
 	}
-
 	for _, q := range queries {
 		if _, err := d.Exec(q); err != nil {
-			// ignore "duplicate column" errors from ALTER TABLE on existing DBs
 			if !strings.Contains(err.Error(), "duplicate column") {
 				return err
 			}
 		}
 	}
-
 	defaults := map[string]string{
 		"update_check_interval": "6h",
 		"docker_proxy":          "",
@@ -72,7 +53,6 @@ func (d *DB) migrate() error {
 	for k, v := range defaults {
 		d.Exec(`INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)`, k, v)
 	}
-
 	return nil
 }
 
@@ -99,7 +79,6 @@ func (d *DB) GetAllSettings() (map[string]string, error) {
 		return nil, err
 	}
 	defer rows.Close()
-
 	result := make(map[string]string)
 	for rows.Next() {
 		var k, v string

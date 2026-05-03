@@ -30,28 +30,27 @@ export default {
   dashboardStats: () => api.get('/dashboard/stats'),
   dashboardRefresh: () => api.post('/dashboard/refresh'),
 
-  // Containers
+  // Containers — all keyed by docker container name
   listContainers: () => api.get('/containers'),
   createContainer: (data) => api.post('/containers', data),
   parseDockerRun: (command) => api.post('/containers/parse-run', { command }),
-  getContainer: (id) => api.get(`/containers/${id}`),
-  getContainerFormData: (id) => api.get(`/containers/${id}/form-data`),
-  updateContainer: (id, data) => api.put(`/containers/${id}`, data),
-  deleteContainer: (id) => api.delete(`/containers/${id}`),
-  startContainer: (id) => api.post(`/containers/${id}/start`),
-  stopContainer: (id) => api.post(`/containers/${id}/stop`),
-  restartContainer: (id) => api.post(`/containers/${id}/restart`),
-  containerStats: (id) => api.get(`/containers/${id}/stats`),
-  containerLogs: (id, tail=500) => api.get(`/containers/${id}/logs`, { params: { tail } }),
-  listContainerFiles: (id, path='/') => api.get(`/containers/${id}/files`, { params: { path } }),
-  downloadContainerFile: (id, path) => `/api/containers/${id}/files/download?path=${encodeURIComponent(path)}&token=${localStorage.getItem('token')}`,
-  uploadContainerFile: (id, path, file) => {
+  getContainer: (name) => api.get(`/containers/${name}`),
+  getContainerFormData: (name) => api.get(`/containers/${name}/form-data`),
+  updateContainer: (name, data) => api.put(`/containers/${name}`, data),
+  deleteContainer: (name) => api.delete(`/containers/${name}`),
+  startContainer: (name) => api.post(`/containers/${name}/start`),
+  stopContainer: (name) => api.post(`/containers/${name}/stop`),
+  restartContainer: (name) => api.post(`/containers/${name}/restart`),
+  containerStats: (name) => api.get(`/containers/${name}/stats`),
+  containerLogs: (name, tail=500) => api.get(`/containers/${name}/logs`, { params: { tail } }),
+  listContainerFiles: (name, path='/') => api.get(`/containers/${name}/files`, { params: { path } }),
+  downloadContainerFile: (name, path) => `/api/containers/${name}/files/download?path=${encodeURIComponent(path)}&token=${localStorage.getItem('token')}`,
+  uploadContainerFile: (name, path, file) => {
     const fd = new FormData(); fd.append('file', file)
-    return api.post(`/containers/${id}/files/upload?path=${encodeURIComponent(path)}`, fd)
+    return api.post(`/containers/${name}/files/upload?path=${encodeURIComponent(path)}`, fd)
   },
-  deleteContainerFile: (id, path) => api.delete(`/containers/${id}/files`, { params: { path } }),
-  updateContainerImage: (id) => api.post(`/containers/${id}/update`),
-  checkUpdates: () => api.post('/containers/check-updates'),
+  deleteContainerFile: (name, path) => api.delete(`/containers/${name}/files`, { params: { path } }),
+  updateContainerImage: (name) => api.post(`/containers/${name}/update`),
 
   // Images
   listImages: () => api.get('/images'),
@@ -78,6 +77,6 @@ export default {
   installDocker: () => api.post('/settings/install-docker'),
 
   // WS URLs
-  terminalWsUrl: (id) => `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws/containers/${id}/terminal?token=${localStorage.getItem('token')}`,
-  logsWsUrl: (id) => `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws/containers/${id}/logs?token=${localStorage.getItem('token')}`,
+  terminalWsUrl: (name) => `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws/containers/${name}/terminal?token=${localStorage.getItem('token')}`,
+  logsWsUrl: (name) => `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws/containers/${name}/logs?token=${localStorage.getItem('token')}`,
 }

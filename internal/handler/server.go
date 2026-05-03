@@ -36,7 +36,7 @@ func NewServer(cfg *config.Config, database *db.DB, webFS embed.FS, sched *sched
 		db:      database,
 		webFS:   webFS,
 		sched:   sched,
-		compose: compose.NewManager(database, cfg.DataPath),
+		compose: compose.NewManager(cfg.DataPath),
 	}
 }
 
@@ -65,25 +65,24 @@ func (s *Server) Run() error {
 			auth.GET("/dashboard/stats", s.dashboardStats)
 			auth.POST("/dashboard/refresh", s.dashboardRefresh)
 
-			// Containers
+			// Containers — :name is the docker container name
 			auth.GET("/containers", s.listContainers)
 			auth.POST("/containers", s.createContainer)
 			auth.POST("/containers/parse-run", s.parseDockerRun)
-			auth.POST("/containers/check-updates", s.checkUpdates)
-			auth.GET("/containers/:id", s.getContainer)
-			auth.GET("/containers/:id/form-data", s.getContainerFormData)
-			auth.PUT("/containers/:id", s.updateContainer)
-			auth.DELETE("/containers/:id", s.deleteContainer)
-			auth.POST("/containers/:id/start", s.startContainer)
-			auth.POST("/containers/:id/stop", s.stopContainer)
-			auth.POST("/containers/:id/restart", s.restartContainer)
-			auth.GET("/containers/:id/stats", s.containerStats)
-			auth.GET("/containers/:id/logs", s.containerLogs)
-			auth.GET("/containers/:id/files", s.listFiles)
-			auth.GET("/containers/:id/files/download", s.downloadFile)
-			auth.POST("/containers/:id/files/upload", s.uploadFile)
-			auth.DELETE("/containers/:id/files", s.deleteFile)
-			auth.POST("/containers/:id/update", s.updateContainerImage)
+			auth.GET("/containers/:name", s.getContainer)
+			auth.GET("/containers/:name/form-data", s.getContainerFormData)
+			auth.PUT("/containers/:name", s.updateContainer)
+			auth.DELETE("/containers/:name", s.deleteContainer)
+			auth.POST("/containers/:name/start", s.startContainer)
+			auth.POST("/containers/:name/stop", s.stopContainer)
+			auth.POST("/containers/:name/restart", s.restartContainer)
+			auth.GET("/containers/:name/stats", s.containerStats)
+			auth.GET("/containers/:name/logs", s.containerLogs)
+			auth.GET("/containers/:name/files", s.listFiles)
+			auth.GET("/containers/:name/files/download", s.downloadFile)
+			auth.POST("/containers/:name/files/upload", s.uploadFile)
+			auth.DELETE("/containers/:name/files", s.deleteFile)
+			auth.POST("/containers/:name/update", s.updateContainerImage)
 
 			// Images
 			auth.GET("/images", s.listImages)
@@ -111,15 +110,13 @@ func (s *Server) Run() error {
 		}
 	}
 
-	// WebSocket
-	r.GET("/ws/containers/:id/terminal", func(c *gin.Context) {
-		ws.HandleTerminal(c.Writer, c.Request, c.Param("id"))
+	r.GET("/ws/containers/:name/terminal", func(c *gin.Context) {
+		ws.HandleTerminal(c.Writer, c.Request, c.Param("name"))
 	})
-	r.GET("/ws/containers/:id/logs", func(c *gin.Context) {
-		ws.HandleLogs(c.Writer, c.Request, c.Param("id"))
+	r.GET("/ws/containers/:name/logs", func(c *gin.Context) {
+		ws.HandleLogs(c.Writer, c.Request, c.Param("name"))
 	})
 
-	// SPA frontend
 	webSub, err := fs.Sub(s.webFS, "web/dist")
 	if err != nil {
 		r.NoRoute(func(c *gin.Context) {
@@ -153,19 +150,16 @@ func (s *Server) Run() error {
 	}
 
 	errCh := make(chan error, 2)
-
 	go func() {
 		addr := fmt.Sprintf(":%d", s.cfg.HTTPPort)
 		errCh <- r.Run(addr)
 	}()
-
 	if s.cfg.CertPath != "" && s.cfg.KeyPath != "" {
 		go func() {
 			addr := fmt.Sprintf(":%d", s.cfg.HTTPSPort)
 			errCh <- r.RunTLS(addr, s.cfg.CertPath, s.cfg.KeyPath)
 		}()
 	}
-
 	return <-errCh
 }
 
@@ -199,8 +193,8 @@ func (s *Server) setup(c *gin.Context) {
 
 func (s *Server) login(c *gin.Context) {
 	var req struct {
-		Username string `json:"username"`
-		Password string `json:"password"`
+		Username string `json:"username" binding:"required"`
+		Password string `json:"password" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		fail(c, 400, err.Error())
@@ -208,7 +202,7 @@ func (s *Server) login(c *gin.Context) {
 	}
 	token, err := auth.Login(s.db, req.Username, req.Password)
 	if err != nil {
-		fail(c, 401, "invalid credentials")
+		fail(c, 401, err.Error())
 		return
 	}
 	ok(c, gin.H{"token": token})
@@ -219,20 +213,17 @@ func (s *Server) login(c *gin.Context) {
 func (s *Server) dashboardInfo(c *gin.Context) {
 	info, _, _ := s.sched.Cache.Get()
 	if info == nil {
-		// Cache miss: collect synchronously
 		client, err := docker.NewClient()
 		if err != nil {
 			fail(c, 500, err.Error())
 			return
 		}
 		defer client.Close()
-		i, err := client.GetSystemInfo(context.Background())
+		info, err = client.GetSystemInfo(context.Background())
 		if err != nil {
 			fail(c, 500, err.Error())
 			return
 		}
-		ok(c, i)
-		return
 	}
 	ok(c, info)
 }
@@ -240,107 +231,32 @@ func (s *Server) dashboardInfo(c *gin.Context) {
 func (s *Server) dashboardStats(c *gin.Context) {
 	_, stats, _ := s.sched.Cache.Get()
 	if stats == nil {
-		// Cache miss: collect synchronously
-		client, err := docker.NewClient()
-		if err != nil {
-			fail(c, 500, err.Error())
-			return
-		}
-		defer client.Close()
-		containers, err := client.ListContainers(context.Background())
-		if err != nil {
-			fail(c, 500, err.Error())
-			return
-		}
-		var totalCPU float64
-		var totalMem, totalMemLimit uint64
-		for _, ct := range containers {
-			if ct.State == "running" {
-				st, err := client.GetContainerStats(context.Background(), ct.ID)
-				if err == nil {
-					totalCPU += st.CPUPercent
-					totalMem += st.MemoryUsage
-					totalMemLimit += st.MemoryLimit
-				}
-			}
-		}
-		ok(c, gin.H{
-			"total_cpu_percent": totalCPU,
-			"total_mem_usage":   totalMem,
-			"total_mem_limit":   totalMemLimit,
-			"containers":        len(containers),
-		})
+		ok(c, gin.H{})
 		return
 	}
 	ok(c, stats)
 }
 
-// dashboardRefresh triggers an immediate collect and waits for it, then returns fresh data.
 func (s *Server) dashboardRefresh(c *gin.Context) {
-	done := make(chan struct{})
-	go func() {
-		s.sched.CollectNow()
-		// Small delay to let goroutine start and write
-		time.Sleep(100 * time.Millisecond)
-		close(done)
-	}()
-	// Wait up to 30s for the collection to actually complete
-	// We do a proper blocking collect here for immediate feedback
-	client, err := docker.NewClient()
-	if err != nil {
-		fail(c, 500, err.Error())
-		return
-	}
-	defer client.Close()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	info, err := client.GetSystemInfo(ctx)
-	if err != nil {
-		fail(c, 500, err.Error())
-		return
-	}
-	containers, err := client.ListContainers(ctx)
-	if err != nil {
-		fail(c, 500, err.Error())
-		return
-	}
-	var totalCPU float64
-	var totalMem, totalMemLimit uint64
-	for _, ct := range containers {
-		if ct.State == "running" {
-			st, err := client.GetContainerStats(ctx, ct.ID)
-			if err == nil {
-				totalCPU += st.CPUPercent
-				totalMem += st.MemoryUsage
-				totalMemLimit += st.MemoryLimit
-			}
-		}
-	}
-	statsData := gin.H{
-		"total_cpu_percent": totalCPU,
-		"total_mem_usage":   totalMem,
-		"total_mem_limit":   totalMemLimit,
-		"containers":        len(containers),
-	}
-	s.sched.Cache.Set(info, statsData)
-	<-done
-	ok(c, gin.H{"info": info, "stats": statsData})
+	s.sched.CollectNow()
+	ok(c, gin.H{"message": "refresh started"})
 }
 
 // ===== CONTAINERS =====
 
-// EnrichedContainer is the unified response shape for the containers list.
-type EnrichedContainer struct {
-	compose.ContainerRecord
-	DockerState  string               `json:"docker_state"`
-	DockerStatus string               `json:"docker_status"`
-	Ports        []docker.PortBinding `json:"ports"`
+// ContainerInfo is what we return in the list.
+type ContainerInfo struct {
+	Name        string              `json:"name"`
+	Image       string              `json:"image"`
+	State       string              `json:"state"`
+	Status      string              `json:"status"`
+	Ports       []docker.PortBinding `json:"ports"`
+	HasCompose  bool                `json:"has_compose"`
+	ComposeDir  string              `json:"compose_dir,omitempty"`
 }
 
+// listContainers returns all docker containers with real-time data.
 func (s *Server) listContainers(c *gin.Context) {
-	// 1. Get all real Docker containers
 	client, err := docker.NewClient()
 	if err != nil {
 		fail(c, 500, err.Error())
@@ -348,104 +264,58 @@ func (s *Server) listContainers(c *gin.Context) {
 	}
 	defer client.Close()
 
-	dockerContainers, err := client.ListContainers(context.Background())
+	containers, err := client.ListContainers(context.Background())
 	if err != nil {
 		fail(c, 500, err.Error())
 		return
 	}
 
-	// 2. Build maps: docker container name → summary, and also by compose service label
-	dockerMap := make(map[string]docker.ContainerSummary)
-	// serviceMap keys on com.docker.compose.service label value (the logical name)
-	serviceMap := make(map[string]docker.ContainerSummary)
-	for _, dc := range dockerContainers {
-		dockerMap[dc.Name] = dc
-		if svc, ok := dc.Labels["com.docker.compose.service"]; ok && svc != "" {
-			// Only store if not already taken by a dockops-managed container
-			serviceMap[svc] = dc
+	var result []ContainerInfo
+	for _, ct := range containers {
+		info := ContainerInfo{
+			Name:       ct.Name,
+			Image:      ct.Image,
+			State:      ct.State,
+			Status:     ct.Status,
+			Ports:      ct.Ports,
+			HasCompose: s.compose.HasComposeFile(ct.Name),
 		}
+		if info.HasCompose {
+			info.ComposeDir = s.compose.GetComposeDir(ct.Name)
+		}
+		result = append(result, info)
 	}
-
-	// 3. Load dockops DB records
-	records, _ := s.compose.ListContainers()
-	dbByName := make(map[string]compose.ContainerRecord)
-	for _, r := range records {
-		dbByName[r.Name] = r
-	}
-
-	// 4. Ensure every Docker container has a DB record (register externals).
-	// Use the compose service label as the canonical name when available,
-	// so we store "pansou" instead of "pansou-pansou-1".
-	for _, dc := range dockerContainers {
-		canonicalName := dc.Name
-		if svc, ok := dc.Labels["com.docker.compose.service"]; ok && svc != "" {
-			canonicalName = svc
-		}
-		if _, exists := dbByName[canonicalName]; !exists {
-			// Also check that we haven't already registered this container under its raw name
-			if _, exists2 := dbByName[dc.Name]; !exists2 {
-				rec, err := s.compose.RegisterExternal(canonicalName)
-				if err == nil {
-					dbByName[canonicalName] = *rec
-				}
-			}
-		}
-	}
-
-	// 5. Reload DB records after registration
-	records, _ = s.compose.ListContainers()
-
-	// 6. Emit enriched list
-	var result []EnrichedContainer
-	for _, r := range records {
-		// Try to find the running docker container by DB name or by compose service label
-		dc, exists := dockerMap[r.Name]
-		if !exists {
-			// Try matching via compose service label (e.g. DB name "pansou", docker name "pansou-pansou-1")
-			if svcDc, ok := serviceMap[r.Name]; ok {
-				dc, exists = svcDc, true
-			}
-		}
-		if !exists {
-			// Container is in DB but not in Docker.
-			// Auto-clean stale external records to avoid ghost entries.
-			if r.Source == "external" {
-				_ = s.compose.DeleteContainerRecord(r.ID)
-				continue
-			}
-			result = append(result, EnrichedContainer{ContainerRecord: r})
-			continue
-		}
-		result = append(result, EnrichedContainer{
-			ContainerRecord: r,
-			DockerState:     dc.State,
-			DockerStatus:    dc.Status,
-			Ports:           dc.Ports,
-		})
-	}
-
 	ok(c, result)
 }
 
+// createContainer creates a new container. Name must not conflict with any existing container.
 func (s *Server) createContainer(c *gin.Context) {
-	var req compose.CreateRequest
+	var req struct {
+		Name           string `json:"name" binding:"required"`
+		ComposeContent string `json:"compose_content" binding:"required"`
+	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		fail(c, 400, err.Error())
 		return
 	}
 
-	record, err := s.compose.CreateContainer(&req)
-	if err != nil {
+	// Validate name does not conflict with existing containers
+	if compose.ContainerExists(req.Name) {
+		fail(c, 400, fmt.Sprintf("container '%s' already exists", req.Name))
+		return
+	}
+
+	if err := s.compose.WriteCompose(req.Name, req.ComposeContent); err != nil {
 		fail(c, 500, err.Error())
 		return
 	}
 
-	if err := s.compose.Up(record.ID); err != nil {
+	if err := s.compose.Up(req.Name); err != nil {
 		fail(c, 500, "Container created but failed to start: "+err.Error())
 		return
 	}
 
-	ok(c, record)
+	ok(c, gin.H{"message": "created", "name": req.Name})
 }
 
 func (s *Server) parseDockerRun(c *gin.Context) {
@@ -456,48 +326,35 @@ func (s *Server) parseDockerRun(c *gin.Context) {
 		fail(c, 400, err.Error())
 		return
 	}
-
-	svc, err := parser.ParseDockerRun(req.Command)
+	result, err := parser.ParseDockerRun(req.Command)
 	if err != nil {
 		fail(c, 400, err.Error())
 		return
 	}
-
-	ok(c, gin.H{
-		"service": svc,
-		"yaml":    svc.ToYAML(),
-	})
+	ok(c, result)
 }
 
+// getContainer returns real-time docker inspect data for a container.
 func (s *Server) getContainer(c *gin.Context) {
-	id := c.Param("id")
-	record, err := s.compose.GetContainer(id)
-	if err != nil {
-		fail(c, 404, "container not found")
-		return
-	}
-
+	name := c.Param("name")
 	client, err := docker.NewClient()
 	if err != nil {
-		ok(c, record)
+		fail(c, 500, err.Error())
 		return
 	}
 	defer client.Close()
 
-	detail, _ := client.InspectContainer(context.Background(), record.Name)
-	ok(c, gin.H{"record": record, "docker": detail})
-}
-
-// getContainerFormData returns pre-filled FormFields for the edit modal.
-// For dockops containers it parses the stored compose YAML;
-// for external containers it reverse-engineers docker inspect output.
-func (s *Server) getContainerFormData(c *gin.Context) {
-	id := c.Param("id")
-	record, err := s.compose.GetContainer(id)
+	detail, err := client.InspectContainer(context.Background(), name)
 	if err != nil {
 		fail(c, 404, "container not found")
 		return
 	}
+	ok(c, detail)
+}
+
+// getContainerFormData returns pre-filled form fields from docker inspect.
+func (s *Server) getContainerFormData(c *gin.Context) {
+	name := c.Param("name")
 
 	client, err := docker.NewClient()
 	if err != nil {
@@ -506,219 +363,183 @@ func (s *Server) getContainerFormData(c *gin.Context) {
 	}
 	defer client.Close()
 
-	detail, err := client.InspectContainer(context.Background(), record.Name)
+	detail, err := client.InspectContainer(context.Background(), name)
 	if err != nil {
-		fail(c, 500, "failed to inspect container: "+err.Error())
+		fail(c, 404, "container not found: "+err.Error())
 		return
 	}
 
-	// Build FormFields from docker inspect
 	fields := &compose.FormFields{
 		Image:      detail.Image,
 		Hostname:   detail.Hostname,
 		Privileged: false,
+		Restart:    detail.RestartPolicy,
 	}
 
-	// Restart policy
-	fields.Restart = detail.RestartPolicy
-
-	// Ports: "hostPort:containerPort/proto"
 	for _, p := range detail.Ports {
 		if p.HostPort != "" && p.HostPort != "0" {
 			fields.Ports = append(fields.Ports, fmt.Sprintf("%s:%s/%s", p.HostPort, p.ContainerPort, p.Protocol))
 		}
 	}
 
-	// Volumes
 	for _, m := range detail.Mounts {
-		if m.Type == "bind" {
-			fields.Volumes = append(fields.Volumes, fmt.Sprintf("%s:%s", m.Source, m.Destination))
-		} else if m.Type == "volume" {
+		if m.Type == "bind" || m.Type == "volume" {
 			fields.Volumes = append(fields.Volumes, fmt.Sprintf("%s:%s", m.Source, m.Destination))
 		}
 	}
 
-	// Environment — filter out variables that have no value (likely image defaults)
 	for _, e := range detail.Env {
 		if strings.Contains(e, "=") {
 			fields.Env = append(fields.Env, e)
 		}
 	}
 
-	// Networks
 	for net := range detail.Networks {
-		if net != "bridge" && net != "host" && net != "none" {
-			fields.NetworkMode = ""
-		} else {
+		if net == "bridge" || net == "host" || net == "none" {
 			fields.NetworkMode = net
 		}
 		break
 	}
 
-	// For external containers, recover the original compose service name.
-	// Docker Compose appends "-<N>" and prefixes with the project name automatically.
-	// Prefer the docker label; fall back to stripping the numeric suffix.
-	displayName := record.Name
-	if record.Source == "external" {
-		if svc, ok := detail.Labels["com.docker.compose.service"]; ok && svc != "" {
-			displayName = svc
-		} else {
-			// Strip trailing "-<digits>" (e.g. "sublink-sublink-1" -> "sublink-sublink")
-			clean := strings.TrimRight(displayName, "0123456789")
-			clean = strings.TrimSuffix(clean, "-")
-			// If result is "<word>-<word>" where both parts equal, take just one
-			if idx := strings.LastIndex(clean, "-"); idx != -1 {
-				if clean[:idx] == clean[idx+1:] {
-					clean = clean[:idx]
-				}
-			}
-			if clean != "" {
-				displayName = clean
-			}
-		}
-	}
-
 	ok(c, gin.H{
-		"name":   displayName,
-		"source": record.Source,
+		"name":   name,
 		"fields": fields,
 	})
 }
 
+// updateContainer: stop and remove old container, write new compose, start new container.
+// oldName is the current docker container name (passed as :name in URL).
+// Body contains newName + compose_content.
 func (s *Server) updateContainer(c *gin.Context) {
-	id := c.Param("id")
-	var req compose.CreateRequest
+	oldName := c.Param("name")
+
+	var req struct {
+		Name           string `json:"name" binding:"required"`
+		ComposeContent string `json:"compose_content" binding:"required"`
+	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		fail(c, 400, err.Error())
 		return
 	}
+	newName := req.Name
 
-	if err := s.compose.UpdateContainer(id, &req); err != nil {
+	// Validate: newName must not conflict with other existing containers (can equal oldName)
+	if newName != oldName && compose.ContainerExists(newName) {
+		fail(c, 400, fmt.Sprintf("container '%s' already exists", newName))
+		return
+	}
+
+	// Step 1: stop and remove the old container (exact name from docker)
+	compose.StopAndRemove(oldName)
+
+	// Step 2: if renamed, remove old compose dir
+	if newName != oldName {
+		s.compose.RemoveComposeDir(oldName)
+	}
+
+	// Step 3: write new compose file
+	if err := s.compose.WriteCompose(newName, req.ComposeContent); err != nil {
 		fail(c, 500, err.Error())
 		return
 	}
 
-	if err := s.compose.Up(id); err != nil {
+	// Step 4: start new container
+	if err := s.compose.Up(newName); err != nil {
 		fail(c, 500, "Updated but failed to start: "+err.Error())
 		return
 	}
 
-	ok(c, gin.H{"message": "updated"})
+	ok(c, gin.H{"message": "updated", "name": newName})
 }
 
+// deleteContainer stops, removes the container and deletes its compose dir.
 func (s *Server) deleteContainer(c *gin.Context) {
-	id := c.Param("id")
-	if err := s.compose.DeleteContainer(id); err != nil {
-		fail(c, 500, err.Error())
-		return
+	name := c.Param("name")
+
+	// Use compose down if compose file exists, otherwise just rm -f
+	if s.compose.HasComposeFile(name) {
+		s.compose.Down(name)
+	} else {
+		compose.StopAndRemove(name)
 	}
+
+	s.compose.RemoveComposeDir(name)
 	ok(c, gin.H{"message": "deleted"})
 }
 
 func (s *Server) startContainer(c *gin.Context) {
-	id := c.Param("id")
-	record, err := s.compose.GetContainer(id)
-	if err != nil {
-		fail(c, 404, "not found")
-		return
-	}
+	name := c.Param("name")
 
-	// External containers with no compose file: use docker start directly
-	if record.Source == "external" || record.ComposeContent == "" {
+	if s.compose.HasComposeFile(name) {
+		if err := s.compose.Up(name); err != nil {
+			fail(c, 500, err.Error())
+			return
+		}
+	} else {
 		client, err := docker.NewClient()
 		if err != nil {
 			fail(c, 500, err.Error())
 			return
 		}
 		defer client.Close()
-		if err := client.StartContainer(context.Background(), record.Name); err != nil {
+		if err := client.StartContainer(context.Background(), name); err != nil {
 			fail(c, 500, err.Error())
 			return
 		}
-		ok(c, gin.H{"message": "started"})
-		return
-	}
-
-	if err := s.compose.Up(id); err != nil {
-		fail(c, 500, err.Error())
-		return
 	}
 	ok(c, gin.H{"message": "started"})
 }
 
 func (s *Server) stopContainer(c *gin.Context) {
-	id := c.Param("id")
-	record, err := s.compose.GetContainer(id)
-	if err != nil {
-		fail(c, 404, "not found")
-		return
-	}
+	name := c.Param("name")
 
-	if record.Source == "external" || record.ComposeContent == "" {
+	if s.compose.HasComposeFile(name) {
+		if err := s.compose.Down(name); err != nil {
+			fail(c, 500, err.Error())
+			return
+		}
+	} else {
 		client, err := docker.NewClient()
 		if err != nil {
 			fail(c, 500, err.Error())
 			return
 		}
 		defer client.Close()
-		if err := client.StopContainer(context.Background(), record.Name); err != nil {
+		if err := client.StopContainer(context.Background(), name); err != nil {
 			fail(c, 500, err.Error())
 			return
 		}
-		ok(c, gin.H{"message": "stopped"})
-		return
-	}
-
-	if err := s.compose.Down(id); err != nil {
-		fail(c, 500, err.Error())
-		return
 	}
 	ok(c, gin.H{"message": "stopped"})
 }
 
 func (s *Server) restartContainer(c *gin.Context) {
-	id := c.Param("id")
-	record, err := s.compose.GetContainer(id)
-	if err != nil {
-		fail(c, 404, "not found")
-		return
-	}
+	name := c.Param("name")
 
-	if record.Source == "external" || record.ComposeContent == "" {
+	if s.compose.HasComposeFile(name) {
+		s.compose.Down(name)
+		time.Sleep(time.Second)
+		if err := s.compose.Up(name); err != nil {
+			fail(c, 500, err.Error())
+			return
+		}
+	} else {
 		client, err := docker.NewClient()
 		if err != nil {
 			fail(c, 500, err.Error())
 			return
 		}
 		defer client.Close()
-		if err := client.RestartContainer(context.Background(), record.Name); err != nil {
+		if err := client.RestartContainer(context.Background(), name); err != nil {
 			fail(c, 500, err.Error())
 			return
 		}
-		ok(c, gin.H{"message": "restarted"})
-		return
-	}
-
-	if err := s.compose.Down(id); err != nil {
-		fail(c, 500, err.Error())
-		return
-	}
-	time.Sleep(2 * time.Second)
-	if err := s.compose.Up(id); err != nil {
-		fail(c, 500, err.Error())
-		return
 	}
 	ok(c, gin.H{"message": "restarted"})
 }
 
 func (s *Server) containerStats(c *gin.Context) {
-	id := c.Param("id")
-	record, err := s.compose.GetContainer(id)
-	if err != nil {
-		fail(c, 404, "not found")
-		return
-	}
-
+	name := c.Param("name")
 	client, err := docker.NewClient()
 	if err != nil {
 		fail(c, 500, err.Error())
@@ -726,7 +547,7 @@ func (s *Server) containerStats(c *gin.Context) {
 	}
 	defer client.Close()
 
-	stats, err := client.GetContainerStats(context.Background(), record.Name)
+	stats, err := client.GetContainerStats(context.Background(), name)
 	if err != nil {
 		fail(c, 500, err.Error())
 		return
@@ -735,12 +556,8 @@ func (s *Server) containerStats(c *gin.Context) {
 }
 
 func (s *Server) containerLogs(c *gin.Context) {
-	id := c.Param("id")
-	record, err := s.compose.GetContainer(id)
-	if err != nil {
-		fail(c, 404, "not found")
-		return
-	}
+	name := c.Param("name")
+	tail := c.DefaultQuery("tail", "500")
 
 	client, err := docker.NewClient()
 	if err != nil {
@@ -749,8 +566,7 @@ func (s *Server) containerLogs(c *gin.Context) {
 	}
 	defer client.Close()
 
-	tail := c.DefaultQuery("tail", "500")
-	reader, err := client.GetContainerLogs(context.Background(), record.Name, tail)
+	reader, err := client.GetContainerLogs(context.Background(), name, tail)
 	if err != nil {
 		fail(c, 500, err.Error())
 		return
@@ -758,40 +574,12 @@ func (s *Server) containerLogs(c *gin.Context) {
 	defer reader.Close()
 
 	data, _ := io.ReadAll(reader)
-	cleaned := stripDockerHeaders(data)
-	ok(c, gin.H{"logs": string(cleaned)})
-}
-
-func stripDockerHeaders(data []byte) []byte {
-	var result []byte
-	i := 0
-	for i < len(data) {
-		if i+8 > len(data) {
-			break
-		}
-		size := int(data[i+4])<<24 | int(data[i+5])<<16 | int(data[i+6])<<8 | int(data[i+7])
-		i += 8
-		if i+size > len(data) {
-			result = append(result, data[i:]...)
-			break
-		}
-		result = append(result, data[i:i+size]...)
-		i += size
-	}
-	if len(result) == 0 {
-		return data
-	}
-	return result
+	ok(c, gin.H{"logs": string(stripDockerHeaders(data))})
 }
 
 func (s *Server) listFiles(c *gin.Context) {
-	id := c.Param("id")
+	name := c.Param("name")
 	path := c.DefaultQuery("path", "/")
-	record, err := s.compose.GetContainer(id)
-	if err != nil {
-		fail(c, 404, "not found")
-		return
-	}
 
 	client, err := docker.NewClient()
 	if err != nil {
@@ -800,7 +588,7 @@ func (s *Server) listFiles(c *gin.Context) {
 	}
 	defer client.Close()
 
-	entries, err := client.ListContainerFiles(context.Background(), record.Name, path)
+	entries, err := client.ListContainerFiles(context.Background(), name, path)
 	if err != nil {
 		fail(c, 500, err.Error())
 		return
@@ -809,13 +597,8 @@ func (s *Server) listFiles(c *gin.Context) {
 }
 
 func (s *Server) downloadFile(c *gin.Context) {
-	id := c.Param("id")
+	name := c.Param("name")
 	path := c.Query("path")
-	record, err := s.compose.GetContainer(id)
-	if err != nil {
-		fail(c, 404, "not found")
-		return
-	}
 
 	client, err := docker.NewClient()
 	if err != nil {
@@ -824,26 +607,21 @@ func (s *Server) downloadFile(c *gin.Context) {
 	}
 	defer client.Close()
 
-	reader, err := client.DownloadContainerFile(context.Background(), record.Name, path)
+	reader, err := client.DownloadContainerFile(context.Background(), name, path)
 	if err != nil {
 		fail(c, 500, err.Error())
 		return
 	}
 	defer reader.Close()
 
-	c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=%s.tar", "download"))
+	c.Header("Content-Disposition", "attachment; filename=download.tar")
 	c.Header("Content-Type", "application/x-tar")
 	io.Copy(c.Writer, reader)
 }
 
 func (s *Server) uploadFile(c *gin.Context) {
-	id := c.Param("id")
+	name := c.Param("name")
 	dstPath := c.DefaultQuery("path", "/tmp")
-	record, err := s.compose.GetContainer(id)
-	if err != nil {
-		fail(c, 404, "not found")
-		return
-	}
 
 	file, _, err := c.Request.FormFile("file")
 	if err != nil {
@@ -859,7 +637,7 @@ func (s *Server) uploadFile(c *gin.Context) {
 	}
 	defer client.Close()
 
-	if err := client.UploadToContainer(context.Background(), record.Name, dstPath, file); err != nil {
+	if err := client.UploadToContainer(context.Background(), name, dstPath, file); err != nil {
 		fail(c, 500, err.Error())
 		return
 	}
@@ -867,13 +645,8 @@ func (s *Server) uploadFile(c *gin.Context) {
 }
 
 func (s *Server) deleteFile(c *gin.Context) {
-	id := c.Param("id")
+	name := c.Param("name")
 	path := c.Query("path")
-	record, err := s.compose.GetContainer(id)
-	if err != nil {
-		fail(c, 404, "not found")
-		return
-	}
 
 	client, err := docker.NewClient()
 	if err != nil {
@@ -882,7 +655,7 @@ func (s *Server) deleteFile(c *gin.Context) {
 	}
 	defer client.Close()
 
-	if err := client.DeleteContainerFile(context.Background(), record.Name, path); err != nil {
+	if err := client.DeleteContainerFile(context.Background(), name, path); err != nil {
 		fail(c, 500, err.Error())
 		return
 	}
@@ -890,27 +663,23 @@ func (s *Server) deleteFile(c *gin.Context) {
 }
 
 func (s *Server) updateContainerImage(c *gin.Context) {
-	id := c.Param("id")
+	name := c.Param("name")
 
-	if err := s.compose.Pull(id); err != nil {
+	if !s.compose.HasComposeFile(name) {
+		fail(c, 400, "no compose file found for this container")
+		return
+	}
+
+	if err := s.compose.Pull(name); err != nil {
 		fail(c, 500, err.Error())
 		return
 	}
-	if err := s.compose.Down(id); err != nil {
+	s.compose.Down(name)
+	if err := s.compose.Up(name); err != nil {
 		fail(c, 500, err.Error())
 		return
 	}
-	if err := s.compose.Up(id); err != nil {
-		fail(c, 500, err.Error())
-		return
-	}
-	s.compose.SetUpdateAvailable(id, false)
 	ok(c, gin.H{"message": "updated"})
-}
-
-func (s *Server) checkUpdates(c *gin.Context) {
-	s.sched.CheckNow()
-	ok(c, gin.H{"message": "update check started"})
 }
 
 // ===== IMAGES =====
@@ -1021,7 +790,6 @@ func (s *Server) listNetworks(c *gin.Context) {
 		return
 	}
 	defer client.Close()
-
 	networks, err := client.ListNetworks(context.Background())
 	if err != nil {
 		fail(c, 500, err.Error())
@@ -1042,14 +810,12 @@ func (s *Server) createNetwork(c *gin.Context) {
 	if req.Driver == "" {
 		req.Driver = "bridge"
 	}
-
 	client, err := docker.NewClient()
 	if err != nil {
 		fail(c, 500, err.Error())
 		return
 	}
 	defer client.Close()
-
 	if err := client.CreateNetwork(context.Background(), req.Name, req.Driver); err != nil {
 		fail(c, 500, err.Error())
 		return
@@ -1059,14 +825,12 @@ func (s *Server) createNetwork(c *gin.Context) {
 
 func (s *Server) deleteNetwork(c *gin.Context) {
 	id := c.Param("id")
-
 	client, err := docker.NewClient()
 	if err != nil {
 		fail(c, 500, err.Error())
 		return
 	}
 	defer client.Close()
-
 	if err := client.RemoveNetwork(context.Background(), id); err != nil {
 		fail(c, 500, err.Error())
 		return
@@ -1081,7 +845,6 @@ func (s *Server) pruneNetworks(c *gin.Context) {
 		return
 	}
 	defer client.Close()
-
 	client.PruneNetworks(context.Background())
 	ok(c, gin.H{"message": "pruned"})
 }
@@ -1095,7 +858,6 @@ func (s *Server) listVolumes(c *gin.Context) {
 		return
 	}
 	defer client.Close()
-
 	volumes, err := client.ListVolumes(context.Background())
 	if err != nil {
 		fail(c, 500, err.Error())
@@ -1112,14 +874,12 @@ func (s *Server) createVolume(c *gin.Context) {
 		fail(c, 400, err.Error())
 		return
 	}
-
 	client, err := docker.NewClient()
 	if err != nil {
 		fail(c, 500, err.Error())
 		return
 	}
 	defer client.Close()
-
 	if err := client.CreateVolume(context.Background(), req.Name); err != nil {
 		fail(c, 500, err.Error())
 		return
@@ -1130,14 +890,12 @@ func (s *Server) createVolume(c *gin.Context) {
 func (s *Server) deleteVolume(c *gin.Context) {
 	name := c.Param("name")
 	force := c.Query("force") == "true"
-
 	client, err := docker.NewClient()
 	if err != nil {
 		fail(c, 500, err.Error())
 		return
 	}
 	defer client.Close()
-
 	if err := client.RemoveVolume(context.Background(), name, force); err != nil {
 		fail(c, 500, err.Error())
 		return
@@ -1152,7 +910,6 @@ func (s *Server) pruneVolumes(c *gin.Context) {
 		return
 	}
 	defer client.Close()
-
 	client.PruneVolumes(context.Background())
 	ok(c, gin.H{"message": "pruned"})
 }
@@ -1178,13 +935,10 @@ func (s *Server) updateSettings(c *gin.Context) {
 		fail(c, 400, err.Error())
 		return
 	}
-
 	allowedKeys := map[string]bool{
-		"update_check_interval": true,
-		"docker_proxy":          true,
-		"collect_interval":      true,
+		"docker_proxy":     true,
+		"collect_interval": true,
 	}
-
 	for k, v := range req {
 		if !allowedKeys[k] {
 			continue
@@ -1192,9 +946,6 @@ func (s *Server) updateSettings(c *gin.Context) {
 		if err := s.db.SetSetting(k, v); err != nil {
 			fail(c, 500, err.Error())
 			return
-		}
-		if k == "update_check_interval" {
-			s.sched.UpdateInterval(v)
 		}
 		if k == "collect_interval" {
 			s.sched.UpdateCollectInterval(v)
@@ -1222,12 +973,9 @@ func (s *Server) updateAdmin(c *gin.Context) {
 func (s *Server) installDocker(c *gin.Context) {
 	c.Header("Content-Type", "text/event-stream")
 	c.Header("Cache-Control", "no-cache")
-
 	c.SSEvent("info", "Starting Docker installation...")
 	c.Writer.Flush()
-
 	c.SSEvent("info", "Run: curl -fsSL https://get.docker.com | sh")
-	c.SSEvent("info", "Please run this command manually or configure sudo access")
 	c.SSEvent("done", "")
 }
 
@@ -1237,13 +985,11 @@ func (s *Server) GetContainerLogs(containerName, tail string) (string, error) {
 		return "", err
 	}
 	defer client.Close()
-
 	reader, err := client.GetContainerLogs(context.Background(), containerName, tail)
 	if err != nil {
 		return "", err
 	}
 	defer reader.Close()
-
 	data, err := io.ReadAll(reader)
 	if err != nil {
 		return "", err
@@ -1251,4 +997,24 @@ func (s *Server) GetContainerLogs(containerName, tail string) (string, error) {
 	return string(stripDockerHeaders(data)), nil
 }
 
-var _ = strings.TrimPrefix
+func stripDockerHeaders(data []byte) []byte {
+	var result []byte
+	i := 0
+	for i < len(data) {
+		if i+8 > len(data) {
+			break
+		}
+		size := int(data[i+4])<<24 | int(data[i+5])<<16 | int(data[i+6])<<8 | int(data[i+7])
+		i += 8
+		if i+size > len(data) {
+			result = append(result, data[i:]...)
+			break
+		}
+		result = append(result, data[i:i+size]...)
+		i += size
+	}
+	if len(result) == 0 {
+		return data
+	}
+	return result
+}

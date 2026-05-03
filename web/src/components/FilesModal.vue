@@ -71,7 +71,7 @@
             </td>
             <td>
               <div class="file-row-actions" @click.stop>
-                <a v-if="!entry.is_dir" :href="api.downloadContainerFile(container.id, entry.path)"
+                <a v-if="!entry.is_dir" :href="api.downloadContainerFile(container.name, entry.path)"
                   target="_blank" class="btn btn-icon" data-tip="下载">
                   <Download :size="13" />
                 </a>
@@ -154,7 +154,7 @@ function fmtDate(ts) {
 async function loadFiles() {
   loading.value = true
   try {
-    const res = await api.listContainerFiles(props.container.id, currentPath.value)
+    const res = await api.listContainerFiles(props.container.name, currentPath.value)
     entries.value = res.data || []
   } catch (e) { toast.error('加载文件失败: ' + e) }
   finally { loading.value = false }
@@ -186,7 +186,7 @@ async function onDblClick(entry) {
     const textExts = ['txt','log','yaml','yml','json','toml','conf','md','sh','py','js','ts','go','env','ini','cfg','xml']
     if (textExts.includes(ext) && entry.size < 500000) {
       try {
-        const url = api.downloadContainerFile(props.container.id, entry.path)
+        const url = api.downloadContainerFile(props.container.name, entry.path)
         const res = await fetch(url)
         const text = await res.text()
         preview.value = { name: entry.name, content: text }
@@ -199,7 +199,7 @@ async function uploadFile(e) {
   const file = e.target.files[0]
   if (!file) return
   try {
-    await api.uploadContainerFile(props.container.id, currentPath.value, file)
+    await api.uploadContainerFile(props.container.name, currentPath.value, file)
     toast.success('上传成功')
     loadFiles()
   } catch (err) { toast.error('上传失败: ' + err) }
@@ -208,7 +208,7 @@ async function uploadFile(e) {
 async function deleteEntry(entry) {
   if (!confirm(`确认删除 ${entry.name}?`)) return
   try {
-    await api.deleteContainerFile(props.container.id, entry.path)
+    await api.deleteContainerFile(props.container.name, entry.path)
     toast.success('已删除')
     loadFiles()
   } catch (e) { toast.error('删除失败: ' + e) }

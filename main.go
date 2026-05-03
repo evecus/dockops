@@ -28,7 +28,7 @@ func main() {
 		log.Fatalf("Failed to init database: %v", err)
 	}
 
-	sched := scheduler.New(database, cfg.DataPath)
+	sched := scheduler.New(database)
 	sched.Start()
 
 	srv := handler.NewServer(cfg, database, webFS, sched)

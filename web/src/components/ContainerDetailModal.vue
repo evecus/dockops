@@ -5,8 +5,8 @@
       <div class="modal-title">
         <Box :size="16" />
         {{ container.name }}
-        <span class="badge" :class="badgeClass(container.docker_state)" style="margin-left:4px">
-          {{ stateLabel(container.docker_state) }}
+        <span class="badge" :class="badgeClass(container.state)" style="margin-left:4px">
+          {{ stateLabel(container.state) }}
         </span>
       </div>
       <button class="modal-close" @click="$emit('close')"><X :size="15" /></button>
@@ -21,7 +21,7 @@
               <tr><td>创建方式</td><td><span class="tag">{{ container.create_mode }}</span></td></tr>
               <tr><td>Compose 目录</td><td><span class="tag">{{ container.compose_dir }}</span></td></tr>
               <tr><td>创建时间</td><td>{{ fmtDate(container.created_at) }}</td></tr>
-              <tr><td>Docker 状态</td><td>{{ container.docker_status || '—' }}</td></tr>
+              <tr><td>Docker 状态</td><td>{{ container.status || '—' }}</td></tr>
             </tbody>
           </table>
         </div>
@@ -137,12 +137,12 @@ function fmtBytes(b) {
 
 onMounted(async () => {
   try {
-    const res = await api.getContainer(props.container.id)
+    const res = await api.getContainer(props.container.name)
     docker.value = res.data?.docker
   } catch {}
-  if (props.container.docker_state === 'running') {
+  if (props.container.state === 'running') {
     try {
-      const s = await api.containerStats(props.container.id)
+      const s = await api.containerStats(props.container.name)
       stats.value = s.data
     } catch {}
   }

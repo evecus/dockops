@@ -7,313 +7,77 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-
-	"github.com/dockops/dockops/internal/db"
-	"github.com/google/uuid"
 )
 
-type ContainerRecord struct {
-	ID              string `json:"id"`
-	Name            string `json:"name"`
-	ComposeDir      string `json:"compose_dir"`
-	CreateMode      string `json:"create_mode"`
-	ComposeContent  string `json:"compose_content"`
-	DockerID        string `json:"docker_id"`
-	UpdateAvailable bool   `json:"update_available"`
-	Source          string `json:"source"` // "dockops" | "external"
-	CreatedAt       string `json:"created_at"`
-	UpdatedAt       string `json:"updated_at"`
-}
-
+// Manager handles compose file storage and container lifecycle.
+// No database is used for container state — all runtime data comes from Docker directly.
 type Manager struct {
-	db       *db.DB
 	dataPath string
 }
 
-func NewManager(database *db.DB, dataPath string) *Manager {
-	return &Manager{db: database, dataPath: dataPath}
+func NewManager(dataPath string) *Manager {
+	return &Manager{dataPath: dataPath}
 }
 
-func (m *Manager) autoComposeDir(name string) string {
+// composeDir returns the directory for a given container name.
+func (m *Manager) composeDir(name string) string {
 	return filepath.Join(m.dataPath, "compose", name)
 }
 
-func (m *Manager) ListContainers() ([]ContainerRecord, error) {
-	rows, err := m.db.Query(`
-		SELECT id, name, compose_dir, create_mode, compose_content,
-		       COALESCE(docker_id,''), update_available, COALESCE(source,'dockops'), created_at, updated_at
-		FROM containers ORDER BY created_at DESC`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
+// composePath returns the docker-compose.yml path for a container name.
+func (m *Manager) composePath(name string) string {
+	return filepath.Join(m.composeDir(name), "docker-compose.yml")
+}
 
-	var result []ContainerRecord
-	for rows.Next() {
-		var r ContainerRecord
-		var updateAvail int
-		if err := rows.Scan(&r.ID, &r.Name, &r.ComposeDir, &r.CreateMode, &r.ComposeContent,
-			&r.DockerID, &updateAvail, &r.Source, &r.CreatedAt, &r.UpdatedAt); err != nil {
-			return nil, err
+// HasComposeFile returns true if a compose file exists for the given name.
+func (m *Manager) HasComposeFile(name string) bool {
+	_, err := os.Stat(m.composePath(name))
+	return err == nil
+}
+
+// GetComposeDir returns the compose directory path for display.
+func (m *Manager) GetComposeDir(name string) string {
+	return m.composeDir(name)
+}
+
+// WriteCompose writes compose content to disk for the given name.
+func (m *Manager) WriteCompose(name, content string) error {
+	dir := m.composeDir(name)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return fmt.Errorf("failed to create directory: %w", err)
+	}
+	return os.WriteFile(m.composePath(name), []byte(content), 0644)
+}
+
+// RemoveComposeDir deletes the compose directory for a container name.
+func (m *Manager) RemoveComposeDir(name string) {
+	os.RemoveAll(m.composeDir(name))
+}
+
+// ContainerExists checks whether a docker container with the given name exists.
+func ContainerExists(name string) bool {
+	out, err := exec.Command("docker", "ps", "-a", "--filter", "name=^/"+name+"$", "--format", "{{.Names}}").Output()
+	if err != nil {
+		return false
+	}
+	for _, n := range strings.Fields(string(out)) {
+		if n == name {
+			return true
 		}
-		r.UpdateAvailable = updateAvail == 1
-		result = append(result, r)
 	}
-	return result, nil
+	return false
 }
 
-func (m *Manager) GetContainer(id string) (*ContainerRecord, error) {
-	var r ContainerRecord
-	var updateAvail int
-	err := m.db.QueryRow(`
-		SELECT id, name, compose_dir, create_mode, compose_content,
-		       COALESCE(docker_id,''), update_available, COALESCE(source,'dockops'), created_at, updated_at
-		FROM containers WHERE id = ?`, id).
-		Scan(&r.ID, &r.Name, &r.ComposeDir, &r.CreateMode, &r.ComposeContent,
-			&r.DockerID, &updateAvail, &r.Source, &r.CreatedAt, &r.UpdatedAt)
-	if err != nil {
-		return nil, err
-	}
-	r.UpdateAvailable = updateAvail == 1
-	return &r, nil
-}
-
-func (m *Manager) GetContainerByName(name string) (*ContainerRecord, error) {
-	var r ContainerRecord
-	var updateAvail int
-	err := m.db.QueryRow(`
-		SELECT id, name, compose_dir, create_mode, compose_content,
-		       COALESCE(docker_id,''), update_available, COALESCE(source,'dockops'), created_at, updated_at
-		FROM containers WHERE name = ?`, name).
-		Scan(&r.ID, &r.Name, &r.ComposeDir, &r.CreateMode, &r.ComposeContent,
-			&r.DockerID, &updateAvail, &r.Source, &r.CreatedAt, &r.UpdatedAt)
-	if err != nil {
-		return nil, err
-	}
-	r.UpdateAvailable = updateAvail == 1
-	return &r, nil
-}
-
-type CreateRequest struct {
-	Name           string `json:"name"`
-	CreateMode     string `json:"create_mode"` // upload|paste|run|form
-	ComposeContent string `json:"compose_content"`
-}
-
-func (m *Manager) CreateContainer(req *CreateRequest) (*ContainerRecord, error) {
-	composeDir := m.autoComposeDir(req.Name)
-
-	if err := os.MkdirAll(composeDir, 0755); err != nil {
-		return nil, fmt.Errorf("failed to create directory: %w", err)
-	}
-
-	composePath := filepath.Join(composeDir, "docker-compose.yml")
-	if err := os.WriteFile(composePath, []byte(req.ComposeContent), 0644); err != nil {
-		return nil, fmt.Errorf("failed to write compose file: %w", err)
-	}
-
-	id := uuid.New().String()
-	_, err := m.db.Exec(`
-		INSERT INTO containers (id, name, compose_dir, create_mode, compose_content, source)
-		VALUES (?, ?, ?, ?, ?, 'dockops')`,
-		id, req.Name, composeDir, req.CreateMode, req.ComposeContent)
-	if err != nil {
-		return nil, err
-	}
-
-	return m.GetContainer(id)
-}
-
-// stopAndRemoveByName forcefully stops and removes a Docker container by name,
-// and also removes any container sharing the same compose project label —
-// this covers cases where the container was started by docker compose and has
-// an auto-generated name like "<project>-<service>-<N>".
-// All errors are ignored (best-effort).
-func stopAndRemoveByName(name string) {
-	// Direct stop/rm by the recorded name
-	exec.Command("docker", "stop", name).Run()
+// StopAndRemove forcefully stops and removes a container by its exact name.
+func StopAndRemove(name string) {
 	exec.Command("docker", "rm", "-f", name).Run()
-
-	// Also find and remove containers whose compose project matches `name`
-	// (handles "sublink-sublink-1" style names where project == "sublink")
-	out, err := exec.Command("docker", "ps", "-a",
-		"--filter", "label=com.docker.compose.project="+name,
-		"--format", "{{.Names}}").Output()
-	if err == nil {
-		for _, cname := range strings.Fields(string(out)) {
-			exec.Command("docker", "stop", cname).Run()
-			exec.Command("docker", "rm", "-f", cname).Run()
-		}
-	}
 }
 
-func (m *Manager) UpdateContainer(id string, req *CreateRequest) error {
-	record, err := m.GetContainer(id)
-	if err != nil {
-		return err
-	}
-
-	// For external containers, composeDown is a no-op (no compose file exists yet).
-	// Forcefully stop and remove the raw Docker container so its ports are freed
-	// before we bring up the new compose stack.
-	if record.Source == "external" {
-		stopAndRemoveByName(record.Name)
-		// Also stop by the user-supplied name in case it differs from the recorded name
-		// (e.g. record.Name="sublink-sublink-1", req.Name="sublink")
-		if req.Name != "" && req.Name != record.Name {
-			stopAndRemoveByName(req.Name)
-		}
-	}
-
-	// Stop existing stack (best-effort; external containers may have no compose file)
-	m.composeDown(record.ComposeDir)
-
-	targetName := req.Name
-	if targetName == "" {
-		targetName = record.Name
-	}
-
-	// If the name hasn't changed, reuse the existing compose_dir to avoid path
-	// mismatch when data_path has been reconfigured since the record was created.
-	// Only compute a new directory when the container is being renamed.
-	var composeDir string
-	if targetName == record.Name && record.ComposeDir != "" {
-		composeDir = record.ComposeDir
-	} else {
-		composeDir = m.autoComposeDir(targetName)
-	}
-
-	if err := os.MkdirAll(composeDir, 0755); err != nil {
-		return err
-	}
-
-	composePath := filepath.Join(composeDir, "docker-compose.yml")
-	if err := os.WriteFile(composePath, []byte(req.ComposeContent), 0644); err != nil {
-		return err
-	}
-
-	_, err = m.db.Exec(`
-		UPDATE containers SET name=?, compose_dir=?, create_mode=?, compose_content=?,
-		                      source='dockops', updated_at=CURRENT_TIMESTAMP
-		WHERE id=?`,
-		targetName, composeDir, req.CreateMode, req.ComposeContent, id)
-	return err
-}
-
-// RegisterExternal upserts a record for a Docker container not created by dockops.
-func (m *Manager) RegisterExternal(name string) (*ContainerRecord, error) {
-	existing, err := m.GetContainerByName(name)
-	if err == nil {
-		return existing, nil
-	}
-
-	id := uuid.New().String()
-	composeDir := m.autoComposeDir(name)
-	_, err = m.db.Exec(`
-		INSERT INTO containers (id, name, compose_dir, create_mode, compose_content, source)
-		VALUES (?, ?, ?, 'external', '', 'external')`,
-		id, name, composeDir)
-	if err != nil {
-		return nil, err
-	}
-	return m.GetContainer(id)
-}
-
-// DeleteContainerRecord removes only the DB record without touching Docker or the compose file.
-// Used to clean up stale external entries that no longer have a running container.
-func (m *Manager) DeleteContainerRecord(id string) error {
-	_, err := m.db.Exec(`DELETE FROM containers WHERE id = ?`, id)
-	return err
-}
-
-func (m *Manager) DeleteContainer(id string) error {
-	record, err := m.GetContainer(id)
-	if err != nil {
-		return err
-	}
-
-	if record.Source == "external" {
-		stopAndRemoveByName(record.Name)
-	}
-	m.composeDown(record.ComposeDir)
-
-	_, err = m.db.Exec(`DELETE FROM containers WHERE id = ?`, id)
-	return err
-}
-
-func (m *Manager) Up(id string) error {
-	record, err := m.GetContainer(id)
-	if err != nil {
-		return err
-	}
-	return m.composeUp(record.ComposeDir)
-}
-
-func (m *Manager) Down(id string) error {
-	record, err := m.GetContainer(id)
-	if err != nil {
-		return err
-	}
-	return m.composeDown(record.ComposeDir)
-}
-
-func (m *Manager) Pull(id string) error {
-	record, err := m.GetContainer(id)
-	if err != nil {
-		return err
-	}
-	cmd := exec.Command("docker", "compose", "-f",
-		filepath.Join(record.ComposeDir, "docker-compose.yml"), "pull")
-	cmd.Dir = record.ComposeDir
-	return cmd.Run()
-}
-
-func (m *Manager) GetComposeContent(id string) (string, error) {
-	record, err := m.GetContainer(id)
-	if err != nil {
-		return "", err
-	}
-	return record.ComposeContent, nil
-}
-
-func (m *Manager) SetUpdateAvailable(id string, available bool) error {
-	val := 0
-	if available {
-		val = 1
-	}
-	_, err := m.db.Exec(`UPDATE containers SET update_available = ? WHERE id = ?`, val, id)
-	return err
-}
-
-func (m *Manager) GetAllForUpdateCheck() ([]ContainerRecord, error) {
-	return m.ListContainers()
-}
-
-func (m *Manager) composeUp(dir string) error {
-	composePath := filepath.Join(dir, "docker-compose.yml")
-
-	// Safety: ensure the directory and compose file exist before invoking docker.
-	// This can happen when data_path was reconfigured after the record was created.
-	if _, err := os.Stat(composePath); os.IsNotExist(err) {
-		if mkErr := os.MkdirAll(dir, 0755); mkErr != nil {
-			return fmt.Errorf("compose up failed: cannot create directory %s: %w", dir, mkErr)
-		}
-		// Re-fetch the record whose compose_dir matches dir so we can restore the file.
-		rows, qErr := m.db.Query(
-			`SELECT compose_content FROM containers WHERE compose_dir = ?`, dir)
-		if qErr == nil {
-			defer rows.Close()
-			if rows.Next() {
-				var content string
-				if sErr := rows.Scan(&content); sErr == nil && content != "" {
-					_ = os.WriteFile(composePath, []byte(content), 0644)
-				}
-			}
-		}
-	}
-
-	cmd := exec.CommandContext(context.Background(), "docker", "compose", "-f", composePath, "up", "-d", "--pull", "missing")
-	cmd.Dir = dir
+// Up runs docker compose up for the given container name.
+func (m *Manager) Up(name string) error {
+	p := m.composePath(name)
+	cmd := exec.CommandContext(context.Background(), "docker", "compose", "-f", p, "up", "-d", "--pull", "missing")
+	cmd.Dir = m.composeDir(name)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("compose up failed: %s: %w", string(out), err)
@@ -321,18 +85,27 @@ func (m *Manager) composeUp(dir string) error {
 	return nil
 }
 
-func (m *Manager) composeDown(dir string) error {
-	composePath := filepath.Join(dir, "docker-compose.yml")
-	if _, err := os.Stat(composePath); os.IsNotExist(err) {
+// Down runs docker compose down for the given container name.
+func (m *Manager) Down(name string) error {
+	p := m.composePath(name)
+	if _, err := os.Stat(p); os.IsNotExist(err) {
 		return nil
 	}
-	cmd := exec.CommandContext(context.Background(), "docker", "compose", "-f", composePath, "down")
-	cmd.Dir = dir
+	cmd := exec.CommandContext(context.Background(), "docker", "compose", "-f", p, "down")
+	cmd.Dir = m.composeDir(name)
 	cmd.Run()
 	return nil
 }
 
-// FormFields is the structured data for the edit form.
+// Pull runs docker compose pull for the given container name.
+func (m *Manager) Pull(name string) error {
+	p := m.composePath(name)
+	cmd := exec.Command("docker", "compose", "-f", p, "pull")
+	cmd.Dir = m.composeDir(name)
+	return cmd.Run()
+}
+
+// FormFields is the structured data for the edit/create form.
 type FormFields struct {
 	Image       string   `json:"image"`
 	Restart     string   `json:"restart"`
@@ -409,7 +182,7 @@ func filterEmpty(ss []string) []string {
 	return out
 }
 
-// ExtractImageFromCompose extracts image name from compose YAML content
+// ExtractImageFromCompose extracts image names from compose YAML content.
 func ExtractImageFromCompose(content string) []string {
 	var images []string
 	for _, line := range strings.Split(content, "\n") {

@@ -10,8 +10,8 @@
         </div>
       </div>
       <div class="header-right">
-        <button class="btn btn-ghost" @click="checkUpdates" :disabled="checking">
-          <RefreshCw :size="14" :class="checking ? 'spin' : ''" /> 检查更新
+        <button class="btn btn-ghost" @click="load">
+          <RefreshCw :size="14" /> 刷新
         </button>
         <button class="btn btn-primary" @click="showCreate = true">
           <Plus :size="15" /> 创建容器
@@ -27,35 +27,24 @@
       <button class="btn btn-primary" @click="showCreate = true"><Plus :size="14" /> 创建第一个容器</button>
     </div>
     <div v-else class="container-grid">
-      <div v-for="ct in filtered" :key="ct.id" class="ct-card" @click="openDetail(ct)">
+      <div v-for="ct in filtered" :key="ct.name" class="ct-card" @click="openDetail(ct)">
         <!-- Header -->
         <div class="ct-card-header">
           <div class="ct-name">
-            <div class="ct-indicator" :class="stateClass(ct.docker_state)"></div>
+            <div class="ct-indicator" :class="stateClass(ct.state)"></div>
             <span>{{ ct.name }}</span>
           </div>
-          <div class="ct-badges">
-            <span v-if="ct.update_available" class="badge badge-amber" @click.stop="updateImage(ct)">
-              <ArrowUp :size="10" /> 有更新
-            </span>
-            <span class="badge" :class="badgeClass(ct.docker_state)">
-              {{ stateLabel(ct.docker_state) }}
-            </span>
-            <span v-if="ct.docker_status" class="ct-status-text">{{ ct.docker_status }}</span>
-          </div>
+          <span class="badge" :class="badgeClass(ct.state)">
+            {{ stateLabel(ct.state) }}
+          </span>
         </div>
 
         <!-- Info -->
         <div class="ct-info">
-          <div class="ct-info-row" v-if="ct.source === 'external'">
-            <span class="ct-info-key">来源</span>
-            <span class="ct-info-val tag" style="color:var(--amber);background:rgba(245,158,11,0.1);border-color:rgba(245,158,11,0.2)">外部容器</span>
-          </div>
-          <div class="ct-info-row" v-if="ct.source !== 'external'">
+          <div class="ct-info-row" v-if="ct.has_compose">
             <span class="ct-info-key">目录</span>
             <span class="ct-info-val tag">{{ shortPath(ct.compose_dir) }}</span>
           </div>
-          <!-- 端口行：始终占位保持卡片对齐 -->
           <div class="ct-info-row">
             <span class="ct-info-key">端口</span>
             <div class="ct-ports">
@@ -65,10 +54,7 @@
                   v-for="p in uniquePorts(ct.ports).slice(0, 4)"
                   :key="p.host_port"
                   @click.stop="openPort(p.host_port)"
-                  :title="`点击访问 ${hostName}:${p.host_port}`"
-                >
-                  {{ p.host_port }}→{{ p.container_port }}
-                </span>
+                >{{ p.host_port }}→{{ p.container_port }}</span>
                 <span v-if="uniquePorts(ct.ports).length > 4" class="sep">+{{ uniquePorts(ct.ports).length - 4 }}</span>
               </template>
               <span v-else class="ct-no-port">—</span>
@@ -78,7 +64,7 @@
 
         <!-- Actions -->
         <div class="ct-actions" @click.stop>
-          <button class="ct-action-btn" v-if="ct.docker_state !== 'running'" @click="start(ct)">
+          <button class="ct-action-btn" v-if="ct.state !== 'running'" @click="start(ct)">
             <Play :size="13" /><span>启动</span>
           </button>
           <button class="ct-action-btn" v-else @click="stop(ct)">
@@ -106,39 +92,33 @@
       </div>
     </div>
 
-    <!-- Create Modal -->
+    <!-- Modals -->
     <Teleport to="body">
       <div v-if="showCreate" class="modal-overlay" @click.self="showCreate = false">
         <CreateContainerModal @close="showCreate = false" @created="onCreated" />
       </div>
 
-      <!-- Detail / Edit Modal -->
       <div v-if="detailCt" class="modal-overlay" @click.self="detailCt = null">
         <ContainerDetailModal :container="detailCt" @close="detailCt = null"
           @edit="editContainer(detailCt)" @refresh="load" />
       </div>
 
-      <!-- Edit Modal -->
       <div v-if="editCt" class="modal-overlay" @click.self="editCt = null">
-        <EditContainerModal :container="editCt" @close="editCt = null" @saved="onCreated" />
+        <EditContainerModal :container="editCt" @close="editCt = null" @saved="onSaved" />
       </div>
 
-      <!-- Terminal Modal -->
       <div v-if="termCt" class="modal-overlay" @click.self="termCt = null">
         <TerminalModal :container="termCt" @close="termCt = null" />
       </div>
 
-      <!-- Logs Modal -->
       <div v-if="logsCt" class="modal-overlay" @click.self="logsCt = null">
         <LogsModal :container="logsCt" @close="logsCt = null" />
       </div>
 
-      <!-- Files Modal -->
       <div v-if="filesCt" class="modal-overlay" @click.self="filesCt = null">
         <FilesModal :container="filesCt" @close="filesCt = null" />
       </div>
 
-      <!-- Delete Confirm -->
       <div v-if="deleteCt" class="modal-overlay" @click.self="deleteCt = null">
         <div class="modal" style="max-width:420px">
           <div class="modal-header">
@@ -168,7 +148,7 @@
 import { ref, computed, onMounted } from 'vue'
 import {
   Plus, RefreshCw, Box, Play, Square, RotateCcw, Terminal,
-  ScrollText, FolderOpen, Pencil, Trash2, X, ArrowUp
+  ScrollText, FolderOpen, Pencil, Trash2, X
 } from 'lucide-vue-next'
 import api from '@/api'
 import { useToastStore } from '@/stores/toast'
@@ -183,7 +163,6 @@ const toast = useToastStore()
 const containers = ref([])
 const loading = ref(true)
 const filter = ref('all')
-const checking = ref(false)
 const showCreate = ref(false)
 const detailCt = ref(null)
 const editCt = ref(null)
@@ -193,10 +172,10 @@ const filesCt = ref(null)
 const deleteCt = ref(null)
 const deleting = ref(false)
 
-const runningCount = computed(() => containers.value.filter(c => c.docker_state === 'running').length)
+const runningCount = computed(() => containers.value.filter(c => c.state === 'running').length)
 const filtered = computed(() => {
-  if (filter.value === 'running') return containers.value.filter(c => c.docker_state === 'running')
-  if (filter.value === 'stopped') return containers.value.filter(c => c.docker_state !== 'running')
+  if (filter.value === 'running') return containers.value.filter(c => c.state === 'running')
+  if (filter.value === 'stopped') return containers.value.filter(c => c.state !== 'running')
   return containers.value
 })
 
@@ -218,8 +197,6 @@ function shortPath(p) {
   const parts = p.split('/')
   return parts.length > 3 ? '…/' + parts.slice(-2).join('/') : p
 }
-
-// 去重端口：相同 host_port 只保留一条（过滤 IPv4/IPv6 重复）
 function uniquePorts(ports) {
   if (!ports?.length) return []
   const seen = new Set()
@@ -230,14 +207,13 @@ function uniquePorts(ports) {
     return true
   })
 }
-
-// 点击端口，用当前页面的 hostname 拼接跳转
 const hostName = window.location?.hostname ?? ''
 function openPort(hostPort) {
   window.open(`http://${hostName}:${hostPort}`, '_blank')
 }
 
 async function load() {
+  loading.value = true
   try {
     const res = await api.listContainers()
     containers.value = res.data || []
@@ -246,26 +222,16 @@ async function load() {
 }
 
 async function start(ct) {
-  try { await api.startContainer(ct.id); toast.success('已启动'); load() }
+  try { await api.startContainer(ct.name); toast.success('已启动'); load() }
   catch (e) { toast.error(e) }
 }
 async function stop(ct) {
-  try { await api.stopContainer(ct.id); toast.success('已停止'); load() }
+  try { await api.stopContainer(ct.name); toast.success('已停止'); load() }
   catch (e) { toast.error(e) }
 }
 async function restart(ct) {
-  try { await api.restartContainer(ct.id); toast.success('已重启'); load() }
+  try { await api.restartContainer(ct.name); toast.success('已重启'); load() }
   catch (e) { toast.error(e) }
-}
-async function updateImage(ct) {
-  try { await api.updateContainerImage(ct.id); toast.success('更新完成'); load() }
-  catch (e) { toast.error(e) }
-}
-async function checkUpdates() {
-  checking.value = true
-  try { await api.checkUpdates(); toast.info('已触发更新检查') }
-  catch (e) { toast.error(e) }
-  finally { checking.value = false; setTimeout(load, 3000) }
 }
 
 function openDetail(ct) { detailCt.value = ct }
@@ -279,7 +245,7 @@ async function doDelete() {
   if (!deleteCt.value) return
   deleting.value = true
   try {
-    await api.deleteContainer(deleteCt.value.id)
+    await api.deleteContainer(deleteCt.value.name)
     toast.success('容器已删除')
     deleteCt.value = null
     load()
@@ -287,9 +253,12 @@ async function doDelete() {
   finally { deleting.value = false }
 }
 
+function onSaved() {
+  editCt.value = null
+  load()
+}
 function onCreated() {
   showCreate.value = false
-  editCt.value = null
   load()
 }
 
@@ -299,158 +268,71 @@ onMounted(load)
 <style scoped>
 .containers-page {}
 .page-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 24px;
+  display: flex; align-items: center; justify-content: space-between; margin-bottom: 24px;
 }
 .header-left, .header-right { display: flex; align-items: center; gap: 10px; }
 .filter-group {
-  display: flex;
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 3px;
-  gap: 2px;
+  display: flex; background: var(--bg-card); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 3px; gap: 2px;
 }
 .filter-btn {
-  padding: 5px 12px;
-  border-radius: calc(var(--radius) - 3px);
-  font-size: 12.5px;
-  font-weight: 500;
-  color: var(--text-muted);
-  background: none;
-  display: flex; align-items: center; gap: 6px;
-  transition: all var(--transition);
-  cursor: pointer;
+  padding: 5px 12px; border-radius: calc(var(--radius) - 3px); font-size: 12.5px;
+  font-weight: 500; color: var(--text-muted); background: none;
+  display: flex; align-items: center; gap: 6px; transition: all var(--transition); cursor: pointer;
 }
 .filter-btn:hover { color: var(--text-secondary); }
 .filter-btn.active { background: var(--accent-dim); color: var(--accent-light); }
 .filter-count {
-  background: rgba(6,182,212,0.15);
-  color: var(--accent);
-  font-size: 10px;
-  padding: 0 5px;
-  border-radius: 99px;
+  background: rgba(6,182,212,0.15); color: var(--accent);
+  font-size: 10px; padding: 0 5px; border-radius: 99px;
 }
-.spin { animation: spin 0.8s linear infinite; }
-
 .container-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(310px, 1fr));
-  gap: 16px;
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(310px, 1fr)); gap: 16px;
 }
 .ct-card {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  padding: 16px;
-  cursor: pointer;
-  transition: all var(--transition);
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  position: relative;
-  overflow: hidden;
+  background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius-lg);
+  padding: 16px; cursor: pointer; transition: all var(--transition);
+  display: flex; flex-direction: column; gap: 12px; position: relative; overflow: hidden;
 }
 .ct-card::before {
-  content: '';
-  position: absolute;
-  top: 0; left: 0; right: 0;
-  height: 2px;
+  content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px;
   background: linear-gradient(90deg, transparent, var(--accent), transparent);
-  opacity: 0;
-  transition: opacity var(--transition);
+  opacity: 0; transition: opacity var(--transition);
 }
 .ct-card:hover { border-color: var(--border-2); box-shadow: var(--shadow-cyan); transform: translateY(-2px); }
 .ct-card:hover::before { opacity: 0.6; }
-
 .ct-card-header { display: flex; align-items: center; justify-content: space-between; }
 .ct-name { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 14px; }
-.ct-indicator {
-  width: 8px; height: 8px;
-  border-radius: 50%;
-  flex-shrink: 0;
-}
+.ct-indicator { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
 .ct-indicator.running { background: var(--green); box-shadow: 0 0 8px var(--green); animation: pulse-dot 2s infinite; }
 .ct-indicator.stopped { background: var(--text-muted); }
 .ct-indicator.paused  { background: var(--amber); }
-.ct-badges { display: flex; align-items: center; gap: 5px; }
-
 .ct-info { display: flex; flex-direction: column; gap: 6px; }
 .ct-info-row { display: flex; align-items: center; gap: 8px; font-size: 12px; }
 .ct-info-key { color: var(--text-muted); min-width: 28px; font-weight: 500; }
 .ct-info-val { color: var(--text-secondary); font-family: var(--font-mono); font-size: 11px; }
 .ct-ports { display: flex; flex-wrap: wrap; gap: 4px; }
-
 .ct-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 5px;
-  padding-top: 8px;
-  border-top: 1px solid var(--border);
+  display: flex; flex-wrap: wrap; gap: 5px; padding-top: 8px; border-top: 1px solid var(--border);
 }
 .ct-action-btn {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 3px;
-  padding: 6px 8px;
-  border-radius: var(--radius);
-  font-size: 10.5px;
-  font-weight: 500;
-  color: var(--text-muted);
-  background: var(--bg-input);
-  border: 1px solid var(--border);
-  cursor: pointer;
-  transition: all var(--transition);
-  min-width: 44px;
+  display: flex; flex-direction: column; align-items: center; gap: 3px;
+  padding: 6px 8px; border-radius: var(--radius); font-size: 10.5px; font-weight: 500;
+  color: var(--text-muted); background: var(--bg-input); border: 1px solid var(--border);
+  cursor: pointer; transition: all var(--transition); min-width: 44px;
 }
-.ct-action-btn:hover {
-  color: var(--accent-light);
-  background: var(--accent-dim);
-  border-color: var(--border-2);
-}
-.ct-action-danger { }
+.ct-action-btn:hover { color: var(--accent-light); background: var(--accent-dim); border-color: var(--border-2); }
 .ct-action-danger:hover {
-  color: var(--red) !important;
-  background: rgba(240,84,100,0.08) !important;
+  color: var(--red) !important; background: rgba(240,84,100,0.08) !important;
   border-color: rgba(240,84,100,0.2) !important;
 }
-.ct-status-text {
-  font-size: 11px;
-  color: var(--text-muted);
-  font-family: var(--font-mono);
-  white-space: nowrap;
-}
-.ct-port-tag {
-  cursor: pointer;
-  transition: all var(--transition);
-}
-.ct-port-tag:hover {
-  color: var(--accent-light);
-  background: var(--accent-dim);
-  border-color: var(--border-3);
-}
-.ct-no-port {
-  font-size: 12px;
-  color: var(--text-muted);
-}
-
+.ct-port-tag { cursor: pointer; transition: all var(--transition); }
+.ct-port-tag:hover { color: var(--accent-light); background: var(--accent-dim); border-color: var(--border-3); }
+.ct-no-port { font-size: 12px; color: var(--text-muted); }
 @media (max-width: 768px) {
-  .page-header {
-    flex-direction: column;
-    align-items: stretch;
-    gap: 12px;
-    margin-bottom: 16px;
-  }
-  .header-right {
-    justify-content: flex-end;
-  }
-  .container-grid {
-    grid-template-columns: 1fr;
-    gap: 12px;
-  }
+  .page-header { flex-direction: column; align-items: stretch; gap: 12px; margin-bottom: 16px; }
+  .header-right { justify-content: flex-end; }
+  .container-grid { grid-template-columns: 1fr; gap: 12px; }
   .ct-card { padding: 14px; }
 }
 </style>
