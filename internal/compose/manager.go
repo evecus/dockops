@@ -137,7 +137,16 @@ func (m *Manager) UpdateContainer(id string, req *CreateRequest) error {
 	if targetName == "" {
 		targetName = record.Name
 	}
-	composeDir := m.autoComposeDir(targetName)
+
+	// If the name hasn't changed, reuse the existing compose_dir to avoid path
+	// mismatch when data_path has been reconfigured since the record was created.
+	// Only compute a new directory when the container is being renamed.
+	var composeDir string
+	if targetName == record.Name && record.ComposeDir != "" {
+		composeDir = record.ComposeDir
+	} else {
+		composeDir = m.autoComposeDir(targetName)
+	}
 
 	if err := os.MkdirAll(composeDir, 0755); err != nil {
 		return err
@@ -237,6 +246,27 @@ func (m *Manager) GetAllForUpdateCheck() ([]ContainerRecord, error) {
 
 func (m *Manager) composeUp(dir string) error {
 	composePath := filepath.Join(dir, "docker-compose.yml")
+
+	// Safety: ensure the directory and compose file exist before invoking docker.
+	// This can happen when data_path was reconfigured after the record was created.
+	if _, err := os.Stat(composePath); os.IsNotExist(err) {
+		if mkErr := os.MkdirAll(dir, 0755); mkErr != nil {
+			return fmt.Errorf("compose up failed: cannot create directory %s: %w", dir, mkErr)
+		}
+		// Re-fetch the record whose compose_dir matches dir so we can restore the file.
+		rows, qErr := m.db.Query(
+			`SELECT compose_content FROM containers WHERE compose_dir = ?`, dir)
+		if qErr == nil {
+			defer rows.Close()
+			if rows.Next() {
+				var content string
+				if sErr := rows.Scan(&content); sErr == nil && content != "" {
+					_ = os.WriteFile(composePath, []byte(content), 0644)
+				}
+			}
+		}
+	}
+
 	cmd := exec.CommandContext(context.Background(), "docker", "compose", "-f", composePath, "up", "-d", "--pull", "missing")
 	cmd.Dir = dir
 	out, err := cmd.CombinedOutput()
