@@ -258,7 +258,7 @@ const generatedYaml = computed(() => {
   if (mode.value !== 'form' || !formFields.value.image) return ''
   const f = formFields.value
   const name = form.value.name || f.image.split('/').pop().split(':')[0] || 'app'
-  let y = `version: '3.8'\n\nservices:\n  ${name}:\n    image: ${f.image}\n`
+  let y = `version: '3.8'\n\nservices:\n  ${name}:\n    image: ${f.image}\n    container_name: ${name}\n`
   if (f.restart) y += `    restart: ${f.restart}\n`
   if (f.hostname) y += `    hostname: ${f.hostname}\n`
   if (f.privileged) y += `    privileged: true\n`

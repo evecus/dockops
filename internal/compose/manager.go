@@ -126,7 +126,7 @@ func BuildComposeFromFields(name string, f *FormFields) string {
 	if svcName == "" {
 		svcName = "app"
 	}
-	y := fmt.Sprintf("version: '3.8'\n\nservices:\n  %s:\n    image: %s\n", svcName, f.Image)
+	y := fmt.Sprintf("version: '3.8'\n\nservices:\n  %s:\n    image: %s\n    container_name: %s\n", svcName, f.Image, svcName)
 	if f.Restart != "" {
 		y += fmt.Sprintf("    restart: %s\n", f.Restart)
 	}
