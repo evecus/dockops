@@ -354,10 +354,16 @@ func (s *Server) listContainers(c *gin.Context) {
 		return
 	}
 
-	// 2. Build name→docker map
+	// 2. Build maps: docker container name → summary, and also by compose service label
 	dockerMap := make(map[string]docker.ContainerSummary)
+	// serviceMap keys on com.docker.compose.service label value (the logical name)
+	serviceMap := make(map[string]docker.ContainerSummary)
 	for _, dc := range dockerContainers {
 		dockerMap[dc.Name] = dc
+		if svc, ok := dc.Labels["com.docker.compose.service"]; ok && svc != "" {
+			// Only store if not already taken by a dockops-managed container
+			serviceMap[svc] = dc
+		}
 	}
 
 	// 3. Load dockops DB records
@@ -367,12 +373,21 @@ func (s *Server) listContainers(c *gin.Context) {
 		dbByName[r.Name] = r
 	}
 
-	// 4. Ensure every Docker container has a DB record (register externals)
+	// 4. Ensure every Docker container has a DB record (register externals).
+	// Use the compose service label as the canonical name when available,
+	// so we store "pansou" instead of "pansou-pansou-1".
 	for _, dc := range dockerContainers {
-		if _, exists := dbByName[dc.Name]; !exists {
-			rec, err := s.compose.RegisterExternal(dc.Name)
-			if err == nil {
-				dbByName[dc.Name] = *rec
+		canonicalName := dc.Name
+		if svc, ok := dc.Labels["com.docker.compose.service"]; ok && svc != "" {
+			canonicalName = svc
+		}
+		if _, exists := dbByName[canonicalName]; !exists {
+			// Also check that we haven't already registered this container under its raw name
+			if _, exists2 := dbByName[dc.Name]; !exists2 {
+				rec, err := s.compose.RegisterExternal(canonicalName)
+				if err == nil {
+					dbByName[canonicalName] = *rec
+				}
 			}
 		}
 	}
@@ -380,12 +395,24 @@ func (s *Server) listContainers(c *gin.Context) {
 	// 5. Reload DB records after registration
 	records, _ = s.compose.ListContainers()
 
-	// 6. Emit enriched list — only containers that actually exist in Docker
+	// 6. Emit enriched list
 	var result []EnrichedContainer
 	for _, r := range records {
+		// Try to find the running docker container by DB name or by compose service label
 		dc, exists := dockerMap[r.Name]
 		if !exists {
-			// Container is in DB but not in Docker (deleted externally) — still show it
+			// Try matching via compose service label (e.g. DB name "pansou", docker name "pansou-pansou-1")
+			if svcDc, ok := serviceMap[r.Name]; ok {
+				dc, exists = svcDc, true
+			}
+		}
+		if !exists {
+			// Container is in DB but not in Docker.
+			// Auto-clean stale external records to avoid ghost entries.
+			if r.Source == "external" {
+				_ = s.compose.DeleteContainerRecord(r.ID)
+				continue
+			}
 			result = append(result, EnrichedContainer{ContainerRecord: r})
 			continue
 		}
@@ -528,8 +555,31 @@ func (s *Server) getContainerFormData(c *gin.Context) {
 		break
 	}
 
+	// For external containers, recover the original compose service name.
+	// Docker Compose appends "-<N>" and prefixes with the project name automatically.
+	// Prefer the docker label; fall back to stripping the numeric suffix.
+	displayName := record.Name
+	if record.Source == "external" {
+		if svc, ok := detail.Labels["com.docker.compose.service"]; ok && svc != "" {
+			displayName = svc
+		} else {
+			// Strip trailing "-<digits>" (e.g. "sublink-sublink-1" -> "sublink-sublink")
+			clean := strings.TrimRight(displayName, "0123456789")
+			clean = strings.TrimSuffix(clean, "-")
+			// If result is "<word>-<word>" where both parts equal, take just one
+			if idx := strings.LastIndex(clean, "-"); idx != -1 {
+				if clean[:idx] == clean[idx+1:] {
+					clean = clean[:idx]
+				}
+			}
+			if clean != "" {
+				displayName = clean
+			}
+		}
+	}
+
 	ok(c, gin.H{
-		"name":   record.Name,
+		"name":   displayName,
 		"source": record.Source,
 		"fields": fields,
 	})
