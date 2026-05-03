@@ -1,0 +1,105 @@
+name: Build & Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (e.g. v1.0.0)'
+        required: true
+        default: 'v1.0.'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build DockOps
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Determine version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "tag=${{ github.event.inputs.tag }}" >> $GITHUB_OUTPUT
+          else
+            echo "tag=${{ github.ref_name }}" >> $GITHUB_OUTPUT
+          fi
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Build Frontend
+        working-directory: web
+        run: npm ci && npm run build
+
+      - name: Go mod tidy & download
+        run: go mod tidy && go mod download
+
+      - name: Build linux/arm64
+        env:
+          GOOS: linux
+          GOARCH: arm64
+          CGO_ENABLED: 0
+        run: |
+          go build -ldflags="-s -w -X main.Version=${{ steps.version.outputs.tag }}" \
+            -o dist/dockops-linux-arm64 .
+
+      - name: Checksums
+        working-directory: dist
+        run: |
+          sha256sum dockops-linux-arm64 > dockops-linux-arm64.sha256
+
+      - name: Config example
+        run: |
+          cat > dist/config.yaml << 'EOF'
+          http_port: 8080
+          https_port: 8443
+          # cert_path: /path/to/cert.pem
+          # key_path: /path/to/key.pem
+          data_path: ./data
+          EOF
+
+      - name: Create Git tag (workflow_dispatch only)
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag ${{ steps.version.outputs.tag }} || true
+          git push origin ${{ steps.version.outputs.tag }} || true
+
+      - name: Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: DockOps ${{ steps.version.outputs.tag }}
+          body: |
+            ## DockOps ${{ steps.version.outputs.tag }}
+
+            基于 Docker Compose 的现代化容器管理平台。
+
+            ### 快速开始
+
+            ```bash
+            # Linux amd64
+            wget https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.tag }}/dockops-linux-amd64
+            chmod +x dockops-linux-amd64
+            ./dockops-linux-amd64 -c config.yaml
+            ```
+
+            首次访问 `http://your-server:8080` 创建管理员账号。
+
+            | 文件 | 平台 |
+            |------|------|
+            | `dockops-linux-arm64` | Linux ARM64 |
+          files: |
+            dist/dockops-linux-arm64
+            dist/config.yaml
