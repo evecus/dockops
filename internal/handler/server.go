@@ -339,7 +339,10 @@ func (s *Server) parseDockerRun(c *gin.Context) {
 		fail(c, 400, err.Error())
 		return
 	}
-	ok(c, result)
+	ok(c, gin.H{
+		"yaml":    result.ToYAML(),
+		"service": result,
+	})
 }
 
 // getContainer returns real-time docker inspect data for a container.

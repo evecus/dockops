@@ -71,10 +71,13 @@ services:
               <label class="form-label">粘贴 docker run 命令</label>
               <textarea v-model="runCmd" class="form-textarea" style="min-height:100px;font-size:12.5px"
                 placeholder="docker run -d --name nginx -p 80:80 -v /data:/data --restart unless-stopped nginx:latest"></textarea>
-              <button class="btn btn-primary" style="width:100%;justify-content:center;margin-top:8px" @click="parseRun" :disabled="parsing">
-                <component :is="parsing ? RefreshCw : Wand2" :size="14" :class="parsing?'spin':''" />
-                {{ parsing ? '解析中...' : '解析命令' }}
-              </button>
+              <div style="display:flex;gap:8px;margin-top:8px">
+                <button class="btn btn-ghost" style="flex:1;justify-content:center" @click="parseRun" :disabled="parsing">
+                  <component :is="parsing ? RefreshCw : Wand2" :size="14" :class="parsing?'spin':''" />
+                  {{ parsing ? '解析中...' : '预览解析结果' }}
+                </button>
+                <span style="font-size:11px;color:var(--text-muted);align-self:center">也可直接点「创建并启动」</span>
+              </div>
             </div>
             <div v-if="parsedYaml" class="compose-preview">
               <div class="compose-preview-header">
@@ -311,6 +314,21 @@ async function submit() {
     if (!composeContent.value.trim()) { toast.error('请提供 Compose 内容'); return }
     submitting.value = true
     try {
+      // For docker run mode, auto-parse if user hasn't clicked parse yet
+      if (mode.value === 'run' && !composeContent.value.trim() && runCmd.value.trim()) {
+        parsing.value = true
+        try {
+          const res = await api.parseDockerRun(runCmd.value.trim())
+          parsedYaml.value = res.data.yaml
+          composeContent.value = parsedYaml.value
+        } catch (e) {
+          toast.error('解析失败: ' + e)
+          submitting.value = false
+          parsing.value = false
+          return
+        } finally { parsing.value = false }
+      }
+      if (!composeContent.value.trim()) { toast.error('请提供 Compose 内容'); submitting.value = false; return }
       // Don't pass name — backend extracts it from compose content
       await api.createContainer({ compose_content: composeContent.value })
       toast.success('容器已创建并启动')
