@@ -328,6 +328,11 @@ func ParseDockerRun(cmd string) (*ComposeService, error) {
 		return nil, fmt.Errorf("no image specified in docker run command")
 	}
 
+	// If ports are mapped and no network mode set, use bridge to ensure port binding works
+	if len(svc.Ports) > 0 && svc.NetworkMode == "" {
+		svc.NetworkMode = "bridge"
+	}
+
 	// cleanup empty maps
 	if len(svc.Labels) == 0 {
 		svc.Labels = nil
