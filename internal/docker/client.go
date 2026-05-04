@@ -681,7 +681,6 @@ func (c *Client) RebuildContainer(ctx context.Context, name string) error {
 			CapAdd:        info.HostConfig.CapAdd,
 			CapDrop:       info.HostConfig.CapDrop,
 			ExtraHosts:    info.HostConfig.ExtraHosts,
-			Devices:       info.HostConfig.Devices,
 			ShmSize:       info.HostConfig.ShmSize,
 			LogConfig:     info.HostConfig.LogConfig,
 		},
