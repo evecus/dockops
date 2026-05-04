@@ -223,8 +223,7 @@ func (s *Scheduler) collectDashboard() {
 	s.Cache.Set(info, statsData)
 }
 
-// checkImageUpdates pulls manifest digest for each tagged image and compares
-// with the local digest to detect updates without actually downloading layers.
+// checkImageUpdates checks for updates only on images currently used by containers.
 func (s *Scheduler) checkImageUpdates() {
 	client, err := docker.NewClient()
 	if err != nil {
@@ -236,24 +235,27 @@ func (s *Scheduler) checkImageUpdates() {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 
-	images, err := client.ListImages(ctx)
+	// Only check tags that are actually in use by a container
+	containers, err := client.ListContainers(ctx)
 	if err != nil {
-		log.Printf("Image update check: list images error: %v", err)
+		log.Printf("Image update check: list containers error: %v", err)
 		return
 	}
 
-	for _, img := range images {
-		for _, tag := range img.RepoTags {
-			if tag == "<none>:<none>" || tag == "" {
-				continue
-			}
-			hasUpdate, err := checkTagHasUpdate(ctx, client, tag)
-			if err != nil {
-				log.Printf("Image update check [%s]: %v", tag, err)
-				continue
-			}
-			s.imgCache.set(tag, hasUpdate)
+	seen := make(map[string]bool)
+	for _, ct := range containers {
+		tag := ct.Image
+		if tag == "" || tag == "<none>:<none>" || seen[tag] {
+			continue
 		}
+		seen[tag] = true
+
+		hasUpdate, err := checkTagHasUpdate(ctx, client, tag)
+		if err != nil {
+			log.Printf("Image update check [%s]: %v", tag, err)
+			continue
+		}
+		s.imgCache.set(tag, hasUpdate)
 	}
 }
 
