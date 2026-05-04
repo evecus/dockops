@@ -63,6 +63,9 @@ export default {
 
   // Images
   listImages: () => api.get('/images'),
+  checkImageUpdate: (tag) => fetch(`/api/images/check-update?tag=${encodeURIComponent(tag)}`, {
+    headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` },
+  }),
   pullImage: (image) => api.post('/images/pull', { image }, { responseType: 'stream' }),
   loadImage: (file) => { const fd = new FormData(); fd.append('file', file); return api.post('/images/load', fd) },
   deleteImage: (id, force=false) => api.delete(`/images/${id}`, { params: { force } }),

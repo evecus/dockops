@@ -47,13 +47,28 @@
           <div class="img-meta-item"><Clock :size="11" /><span>{{ fmtDate(img.created) }}</span></div>
         </div>
         <div class="img-actions">
-          <button class="btn btn-ghost btn-sm" style="flex:1;justify-content:center" @click="repull(img)" :disabled="pulling===img.id">
-            <component :is="pulling===img.id ? RefreshCw : DownloadCloud" :size="13" :class="pulling===img.id?'spin':''"/>
+          <button class="btn btn-ghost btn-sm" style="flex:1;justify-content:center" @click="repull(img)"
+            :disabled="!!updateStatus[img.id]">
+            <component :is="updateStatus[img.id] ? RefreshCw : DownloadCloud" :size="13"
+              :class="updateStatus[img.id] ? 'spin' : ''"/>
             更新
           </button>
-          <button class="btn btn-danger btn-sm" style="flex:1;justify-content:center" @click="confirmDelete(img)">
+          <button class="btn btn-danger btn-sm" style="flex:1;justify-content:center" @click="confirmDelete(img)"
+            :disabled="!!updateStatus[img.id]">
             <Trash2 :size="13"/> 删除
           </button>
+        </div>
+        <!-- Update progress -->
+        <div v-if="updateStatus[img.id]" class="update-progress">
+          <div class="update-progress-bar">
+            <div class="update-progress-fill"
+              :class="updateStatus[img.id].phase === 'error' ? 'fill-error' :
+                      updateStatus[img.id].phase === 'done' ? 'fill-done' : 'fill-active'">
+            </div>
+          </div>
+          <div class="update-msg" :class="updateStatus[img.id].phase">
+            {{ updateStatus[img.id].msg }}
+          </div>
         </div>
       </div>
     </div>
@@ -154,6 +169,8 @@ import api from '@/api'
 import { useToastStore } from '@/stores/toast'
 const toast = useToastStore()
 const images = ref([]), loading = ref(true), search = ref(''), pulling = ref(null)
+// updateStatus: { [imgId]: { phase: 'checking'|'pulling'|'done'|'error', msg: string } }
+const updateStatus = ref({})
 const showPull = ref(false), showLoad = ref(false), pullRef = ref(''), pullLog = ref(''), pullDone = ref(false)
 const deletingImg = ref(null), deleting = ref(false), forceDelete = ref(false)
 const loadFile = ref(null), loadDragging = ref(false), loadingFile = ref(false)
@@ -181,15 +198,61 @@ async function doPull(){
   }catch(e){pullLog.value+='\n✗ 拉取失败: '+e;toast.error('拉取失败')}finally{pulling.value=null}
 }
 function closePull(){showPull.value=false;pullRef.value='';pullLog.value='';pullDone.value=false}
-async function repull(img){
-  const tag=img.repo_tags?.[0];if(!tag||tag==='<none>:<none>'){toast.error('无法更新无标签镜像');return}
-  pulling.value=img.id
-  try{
-    const resp=await fetch('/api/images/pull',{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${localStorage.getItem('token')}`},body:JSON.stringify({image:tag})})
-    const reader=resp.body.getReader()
-    while(true){const{done}=await reader.read();if(done)break}
-    toast.success('更新成功');load()
-  }catch{toast.error('更新失败')}finally{pulling.value=null}
+async function repull(img) {
+  const tag = img.repo_tags?.[0]
+  if (!tag || tag === '<none>:<none>') { toast.error('无法更新无标签镜像'); return }
+
+  const setStatus = (phase, msg) => {
+    updateStatus.value = { ...updateStatus.value, [img.id]: { phase, msg } }
+  }
+  const clearStatus = () => {
+    const s = { ...updateStatus.value }
+    delete s[img.id]
+    updateStatus.value = s
+  }
+
+  setStatus('checking', '正在检测版本...')
+  try {
+    const resp = await api.checkImageUpdate(tag)
+    const reader = resp.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      const parts = buffer.split('\n\n')
+      buffer = parts.pop()
+      for (const part of parts) {
+        let eventType = '', data = ''
+        for (const line of part.split('\n')) {
+          if (line.startsWith('event:')) eventType = line.slice(6).trim()
+          if (line.startsWith('data:')) data = line.slice(5).trim()
+        }
+        if (!data) continue
+        if (eventType === 'checking') setStatus('checking', data)
+        else if (eventType === 'pulling') setStatus('pulling', data)
+        else if (eventType === 'progress') setStatus('pulling', '正在拉取镜像...')
+        else if (eventType === 'up-to-date') {
+          setStatus('done', data)
+          toast.success(data)
+          setTimeout(clearStatus, 3000)
+        } else if (eventType === 'updated') {
+          setStatus('done', data)
+          toast.success(data)
+          setTimeout(() => { clearStatus(); load() }, 2000)
+        } else if (eventType === 'error') {
+          setStatus('error', data)
+          toast.error(data)
+          setTimeout(clearStatus, 4000)
+        }
+      }
+    }
+  } catch(e) {
+    setStatus('error', '更新失败: ' + e.message)
+    setTimeout(clearStatus, 4000)
+  }
 }
 function confirmDelete(img){deletingImg.value=img;forceDelete.value=false}
 async function doDelete(){
@@ -257,5 +320,49 @@ onMounted(load)
     grid-template-columns: 1fr;
     gap: 12px;
   }
+}
+.update-progress {
+  padding: 8px 0 2px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.update-progress-bar {
+  height: 3px;
+  background: var(--border);
+  border-radius: 99px;
+  overflow: hidden;
+}
+.update-progress-fill {
+  height: 100%;
+  border-radius: 99px;
+  transition: width 0.3s;
+}
+.fill-active {
+  width: 100%;
+  background: linear-gradient(90deg, var(--accent), var(--accent-light));
+  animation: progress-slide 1.5s infinite;
+}
+.fill-done {
+  width: 100%;
+  background: var(--green);
+  animation: none;
+}
+.fill-error {
+  width: 100%;
+  background: var(--red);
+  animation: none;
+}
+.update-msg {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+}
+.update-msg.done { color: var(--green); }
+.update-msg.error { color: var(--red); }
+.update-msg.pulling, .update-msg.checking { color: var(--accent); }
+@keyframes progress-slide {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(200%); }
 }
 </style>

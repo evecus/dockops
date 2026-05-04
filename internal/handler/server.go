@@ -87,6 +87,7 @@ func (s *Server) Run() error {
 
 			// Images
 			auth.GET("/images", s.listImages)
+			auth.GET("/images/check-update", s.checkImageUpdate)
 			auth.POST("/images/pull", s.pullImage)
 			auth.POST("/images/load", s.loadImage)
 			auth.DELETE("/images/:id", s.deleteImage)
@@ -791,6 +792,71 @@ func (s *Server) updateContainerImage(c *gin.Context) {
 		return
 	}
 	ok(c, gin.H{"message": "updated"})
+}
+
+// checkImageUpdate pulls the image and compares IDs to detect if an update is available.
+// Streams progress via SSE: "checking" → "pulling" → "up-to-date" or "updated" or "error"
+func (s *Server) checkImageUpdate(c *gin.Context) {
+	tag := c.Query("tag")
+	if tag == "" {
+		c.SSEvent("error", "missing tag parameter")
+		return
+	}
+
+	c.Header("Content-Type", "text/event-stream")
+	c.Header("Cache-Control", "no-cache")
+	c.Header("Connection", "keep-alive")
+	c.Header("X-Accel-Buffering", "no")
+
+	send := func(event, data string) {
+		c.SSEvent(event, data)
+		c.Writer.Flush()
+	}
+
+	client, err := docker.NewClient()
+	if err != nil {
+		send("error", "无法连接 Docker: "+err.Error())
+		return
+	}
+	defer client.Close()
+
+	ctx := context.Background()
+
+	// Record current local image ID
+	send("checking", "正在获取当前版本信息...")
+	oldID, _ := client.GetImageID(ctx, tag)
+
+	// Pull latest
+	send("pulling", "正在拉取最新版本...")
+	reader, err := client.StreamPullImage(ctx, tag)
+	if err != nil {
+		send("error", "拉取失败: "+err.Error())
+		return
+	}
+	buf := make([]byte, 4096)
+	for {
+		n, err := reader.Read(buf)
+		if n > 0 {
+			send("progress", string(buf[:n]))
+		}
+		if err != nil {
+			break
+		}
+	}
+	reader.Close()
+
+	// Compare IDs
+	newID, err := client.GetImageID(ctx, tag)
+	if err != nil {
+		send("error", "获取新版本信息失败: "+err.Error())
+		return
+	}
+
+	if oldID != "" && oldID == newID {
+		send("up-to-date", "当前版本已是最新版，无需更新")
+	} else {
+		send("updated", "更新完成！镜像已更新到最新版本")
+	}
 }
 
 // ===== IMAGES =====
