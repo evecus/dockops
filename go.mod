@@ -11,7 +11,6 @@ require (
 	github.com/glebarez/go-sqlite v1.22.0
 	github.com/robfig/cron/v3 v3.0.1
 	golang.org/x/crypto v0.24.0
-	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (
