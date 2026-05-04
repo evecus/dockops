@@ -34,6 +34,7 @@
             <div class="ct-indicator" :class="stateClass(ct.state)"></div>
             <span>{{ ct.name }}</span>
           </div>
+          <span v-if="ct.image_update_available" class="badge badge-update" title="有镜像更新可用">↑ 有更新</span>
         </div>
 
         <!-- Info -->
@@ -86,6 +87,9 @@
           </button>
           <button class="ct-action-btn ct-action-danger" @click="confirmDelete(ct)" :disabled="!!pendingOp[ct.name]">
             <Trash2 :size="13" /><span>删除</span>
+          </button>
+          <button v-if="ct.image_update_available" class="ct-action-btn ct-action-update" @click="updateImage(ct)" :disabled="!!pendingOp[ct.name]">
+            <DownloadCloud :size="13" /><span>更新</span>
           </button>
         </div>
       </div>
@@ -156,7 +160,7 @@
 import { ref, computed, onMounted } from 'vue'
 import {
   Plus, RefreshCw, Box, Play, Square, RotateCcw, Terminal,
-  ScrollText, FolderOpen, Pencil, Trash2, X
+  ScrollText, FolderOpen, Pencil, Trash2, X, DownloadCloud
 } from 'lucide-vue-next'
 import api from '@/api'
 import { useToastStore } from '@/stores/toast'
@@ -276,6 +280,20 @@ async function restart(ct) {
   }
 }
 
+async function updateImage(ct) {
+  pendingOp.value[ct.name] = true
+  toast.info(`正在更新 ${ct.name} 的镜像…`)
+  try {
+    await api.updateContainerImage(ct.name)
+    toast.success(`${ct.name} 镜像更新成功，容器已重启`)
+    load()
+  } catch (e) {
+    toast.error(`${ct.name} 镜像更新失败`)
+  } finally {
+    delete pendingOp.value[ct.name]
+  }
+}
+
 function openDetail(ct) { detailCt.value = ct }
 function openTerminal(ct) { termCt.value = ct }
 function openLogs(ct) { logsCt.value = ct }
@@ -381,6 +399,23 @@ onMounted(load)
 .ct-action-danger:hover {
   color: var(--red) !important; background: rgba(240,84,100,0.08) !important;
   border-color: rgba(240,84,100,0.2) !important;
+}
+.ct-action-update {
+  color: var(--amber, #f59e0b) !important;
+  border-color: rgba(245,158,11,0.3) !important;
+}
+.ct-action-update:hover {
+  background: rgba(245,158,11,0.1) !important;
+  border-color: rgba(245,158,11,0.5) !important;
+}
+.badge-update {
+  background: rgba(245,158,11,0.15);
+  color: #f59e0b;
+  border: 1px solid rgba(245,158,11,0.3);
+  border-radius: 99px;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 8px;
 }
 .ct-port-tag { cursor: pointer; transition: all var(--transition); }
 .ct-port-tag:hover { color: var(--accent-light); background: var(--accent-dim); border-color: var(--border-3); }

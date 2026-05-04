@@ -63,6 +63,7 @@ export default {
 
   // Images
   listImages: () => api.get('/images'),
+  getImageUpdateStatus: () => api.get('/images/update-status'),
   checkImageUpdate: (tag) => fetch(`/api/images/check-update?tag=${encodeURIComponent(tag)}`, {
     headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` },
   }),

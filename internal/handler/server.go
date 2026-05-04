@@ -89,6 +89,7 @@ func (s *Server) Run() error {
 			// Images
 			auth.GET("/images", s.listImages)
 			auth.GET("/images/check-update", s.checkImageUpdate)
+			auth.GET("/images/update-status", s.getImageUpdateStatus)
 			auth.POST("/images/pull", s.pullImage)
 			auth.POST("/images/load", s.loadImage)
 			auth.DELETE("/images/*id", s.deleteImage)
@@ -286,13 +287,14 @@ func (s *Server) dashboardRefresh(c *gin.Context) {
 
 // ContainerInfo is what we return in the list.
 type ContainerInfo struct {
-	Name        string              `json:"name"`
-	Image       string              `json:"image"`
-	State       string              `json:"state"`
-	Status      string              `json:"status"`
-	Ports       []docker.PortBinding `json:"ports"`
-	HasCompose  bool                `json:"has_compose"`
-	ComposeDir  string              `json:"compose_dir,omitempty"`
+	Name                 string               `json:"name"`
+	Image                string               `json:"image"`
+	State                string               `json:"state"`
+	Status               string               `json:"status"`
+	Ports                []docker.PortBinding `json:"ports"`
+	HasCompose           bool                 `json:"has_compose"`
+	ComposeDir           string               `json:"compose_dir,omitempty"`
+	ImageUpdateAvailable bool                 `json:"image_update_available"`
 }
 
 // listContainers returns all docker containers with real-time data.
@@ -310,6 +312,8 @@ func (s *Server) listContainers(c *gin.Context) {
 		return
 	}
 
+	updateStatus := s.sched.GetImageUpdateStatus()
+
 	var result []ContainerInfo
 	for _, ct := range containers {
 		info := ContainerInfo{
@@ -322,6 +326,9 @@ func (s *Server) listContainers(c *gin.Context) {
 		}
 		if info.HasCompose {
 			info.ComposeDir = s.compose.GetComposeDir(ct.Name)
+		}
+		if us, ok := updateStatus[ct.Image]; ok {
+			info.ImageUpdateAvailable = us.HasUpdate
 		}
 		result = append(result, info)
 	}
@@ -792,6 +799,19 @@ func (s *Server) updateContainerImage(c *gin.Context) {
 		fail(c, 500, err.Error())
 		return
 	}
+	// Clear update flag for this container's image
+	client, err := docker.NewClient()
+	if err == nil {
+		defer client.Close()
+		imgs, err := client.ListImages(context.Background())
+		if err == nil {
+			for _, img := range imgs {
+				for _, tag := range img.RepoTags {
+					s.sched.MarkImageUpdated(tag)
+				}
+			}
+		}
+	}
 	ok(c, gin.H{"message": "updated"})
 }
 
@@ -856,8 +876,13 @@ func (s *Server) checkImageUpdate(c *gin.Context) {
 	if oldID != "" && oldID == newID {
 		send("up-to-date", "当前版本已是最新版，无需更新")
 	} else {
+		s.sched.MarkImageUpdated(tag)
 		send("updated", "更新完成！镜像已更新到最新版本")
 	}
+}
+
+func (s *Server) getImageUpdateStatus(c *gin.Context) {
+	ok(c, s.sched.GetImageUpdateStatus())
 }
 
 // ===== IMAGES =====
@@ -1115,8 +1140,9 @@ func (s *Server) updateSettings(c *gin.Context) {
 		return
 	}
 	allowedKeys := map[string]bool{
-		"docker_proxy":     true,
-		"collect_interval": true,
+		"docker_proxy":          true,
+		"collect_interval":      true,
+		"update_check_interval": true,
 	}
 	for k, v := range req {
 		if !allowedKeys[k] {
@@ -1128,6 +1154,9 @@ func (s *Server) updateSettings(c *gin.Context) {
 		}
 		if k == "collect_interval" {
 			s.sched.UpdateCollectInterval(v)
+		}
+		if k == "update_check_interval" {
+			s.sched.UpdateImageCheckInterval(v)
 		}
 	}
 	ok(c, gin.H{"message": "settings updated"})

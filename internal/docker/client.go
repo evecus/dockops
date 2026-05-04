@@ -612,6 +612,24 @@ func (c *Client) GetImageID(ctx context.Context, ref string) (string, error) {
 	return inspect.ID, nil
 }
 
+// GetRemoteDigest fetches the remote manifest digest for a tag without downloading layers.
+func (c *Client) GetRemoteDigest(ctx context.Context, ref string) (string, error) {
+	dist, err := c.cli.DistributionInspect(ctx, ref, "")
+	if err != nil {
+		return "", err
+	}
+	return string(dist.Descriptor.Digest), nil
+}
+
+// GetLocalDigests returns the repo digests stored locally for an image tag.
+func (c *Client) GetLocalDigests(ctx context.Context, ref string) ([]string, error) {
+	inspect, _, err := c.cli.ImageInspectWithRaw(ctx, ref)
+	if err != nil {
+		return nil, err
+	}
+	return inspect.RepoDigests, nil
+}
+
 // ===== NETWORKS =====
 
 type NetworkSummary struct {
