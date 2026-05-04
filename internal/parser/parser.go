@@ -508,7 +508,7 @@ func convertMount(mountStr string) string {
 	return mountStr
 }
 
-// tokenize splits a shell command respecting quotes
+// tokenize splits a shell command respecting quotes and line continuations (\<newline>)
 func tokenize(cmd string) ([]string, error) {
 	var tokens []string
 	var current strings.Builder
@@ -518,18 +518,21 @@ func tokenize(cmd string) ([]string, error) {
 	for i := 0; i < len(cmd); i++ {
 		ch := cmd[i]
 		switch {
-		case ch == '\\' && !inSingle && i+1 < len(cmd):
+		case ch == '\\' && !inSingle && i+1 < len(cmd) && cmd[i+1] == '\n':
+			// Line continuation: backslash followed by newline — skip both
 			i++
-			current.WriteByte(cmd[i])
+		case ch == '\\' && !inSingle && !inDouble && i+1 < len(cmd):
+			// Escape sequence inside unquoted or double-quoted string
+			i++
+			next := cmd[i]
+			if next != '\n' {
+				current.WriteByte(next)
+			}
 		case ch == '\'' && !inDouble:
 			inSingle = !inSingle
 		case ch == '"' && !inSingle:
 			inDouble = !inDouble
-		case (ch == ' ' || ch == '\t' || ch == '\n' || ch == '\\') && !inSingle && !inDouble:
-			if ch == '\\' && i+1 < len(cmd) && cmd[i+1] == '\n' {
-				i++ // skip line continuation
-				continue
-			}
+		case (ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r') && !inSingle && !inDouble:
 			if current.Len() > 0 {
 				tokens = append(tokens, current.String())
 				current.Reset()
