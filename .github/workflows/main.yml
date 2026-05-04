@@ -103,7 +103,7 @@ jobs:
             # Linux amd64
             wget https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.tag }}/dockops-linux-amd64
             chmod +x dockops-linux-amd64
-            ./dockops-linux-amd64 -c config.yaml
+            ./dockops-linux-amd64
             ```
 
             首次访问 `http://your-server:8080` 创建管理员账号。
