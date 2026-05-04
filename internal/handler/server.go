@@ -568,6 +568,7 @@ func (s *Server) updateContainer(c *gin.Context) {
 // deleteContainer stops, removes the container and deletes its compose dir.
 func (s *Server) deleteContainer(c *gin.Context) {
 	name := c.Param("name")
+	removeCompose := c.Query("remove_compose") == "true"
 
 	client, err := docker.NewClient()
 	if err != nil {
@@ -583,8 +584,10 @@ func (s *Server) deleteContainer(c *gin.Context) {
 		return
 	}
 
-	// Clean up compose dir if present
-	s.compose.RemoveComposeDir(name)
+	// Only remove compose dir if user explicitly requested it
+	if removeCompose {
+		s.compose.RemoveComposeDir(name)
+	}
 	ok(c, gin.H{"message": "deleted"})
 }
 

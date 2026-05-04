@@ -46,7 +46,7 @@ export default {
   getContainer: (name) => api.get(`/containers/${name}`),
   getContainerFormData: (name) => api.get(`/containers/${name}/form-data`),
   updateContainer: (name, data) => api.put(`/containers/${name}`, data),
-  deleteContainer: (name) => api.delete(`/containers/${name}`),
+  deleteContainer: (name, removeCompose=false) => api.delete(`/containers/${name}`, { params: { remove_compose: removeCompose } }),
   startContainer: (name) => api.post(`/containers/${name}/start`),
   stopContainer: (name) => api.post(`/containers/${name}/stop`),
   restartContainer: (name) => api.post(`/containers/${name}/restart`),

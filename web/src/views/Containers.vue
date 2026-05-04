@@ -34,16 +34,13 @@
             <div class="ct-indicator" :class="stateClass(ct.state)"></div>
             <span>{{ ct.name }}</span>
           </div>
-          <span class="badge" :class="badgeClass(ct.state)">
-            {{ stateLabel(ct.state) }}
-          </span>
         </div>
 
         <!-- Info -->
         <div class="ct-info">
-          <div class="ct-info-row" v-if="ct.has_compose">
-            <span class="ct-info-key">目录</span>
-            <span class="ct-info-val tag">{{ shortPath(ct.compose_dir) }}</span>
+          <div class="ct-info-row">
+            <span class="ct-info-key">状态</span>
+            <span class="badge" :class="badgeClass(ct.state)" style="font-size:11px">{{ stateLabel(ct.state) }}</span>
           </div>
           <div class="ct-info-row">
             <span class="ct-info-key">端口</span>
@@ -140,6 +137,10 @@
             <p style="color:var(--text-secondary);font-size:14px">
               确定要删除容器 <strong style="color:var(--text-primary)">{{ deleteCt.name }}</strong> 吗？此操作不可恢复。
             </p>
+            <label v-if="deleteCt.has_compose" style="display:flex;align-items:center;gap:8px;margin-top:12px;font-size:13px;color:var(--text-secondary);cursor:pointer">
+              <input type="checkbox" v-model="deleteCompose" style="width:14px;height:14px;cursor:pointer" />
+              同时删除 Compose 文件
+            </label>
           </div>
           <div class="modal-footer">
             <button class="btn btn-ghost" @click="deleteCt = null">取消</button>
@@ -178,6 +179,7 @@ const termCt = ref(null)
 const logsCt = ref(null)
 const filesCt = ref(null)
 const deleteCt = ref(null)
+const deleteCompose = ref(false)
 const progressData = ref(null)
 
 // Track in-progress operations per container name
@@ -279,17 +281,18 @@ function openTerminal(ct) { termCt.value = ct }
 function openLogs(ct) { logsCt.value = ct }
 function openFiles(ct) { filesCt.value = ct }
 function editContainer(ct) { editCt.value = ct; detailCt.value = null }
-function confirmDelete(ct) { deleteCt.value = ct }
+function confirmDelete(ct) { deleteCt.value = ct; deleteCompose.value = false }
 
 async function doDelete() {
   const ct = deleteCt.value
   if (!ct) return
+  const removeCompose = deleteCompose.value
   // Close confirm modal immediately
   deleteCt.value = null
   pendingOp.value[ct.name] = true
   toast.info(`正在删除 ${ct.name}…`)
   try {
-    await api.deleteContainer(ct.name)
+    await api.deleteContainer(ct.name, removeCompose)
     toast.success(`删除 ${ct.name} 成功`)
     load()
   } catch (e) {
