@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
-	"time"
 
 	"github.com/dockops/dockops/internal/auth"
 	"github.com/dockops/dockops/internal/compose"
