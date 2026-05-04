@@ -1,8 +1,7 @@
-# DockOps
+# DockPs
 
-> 现代化 Docker 管理面板，以 Compose 为核心，单二进制部署。
+> 现代化 Docker 管理面板，以 Compose 为核心，单二进制部署，无需配置文件。
 
-![DockOps](https://img.shields.io/badge/DockOps-v1.0.0-06b6d4?style=for-the-badge)
 ![Go](https://img.shields.io/badge/Go-1.22-00ADD8?style=for-the-badge&logo=go)
 ![Vue](https://img.shields.io/badge/Vue-3.4-4FC08D?style=for-the-badge&logo=vue.js)
 
@@ -10,13 +9,13 @@
 
 - 🐳 **Compose 管理** — 以 docker-compose 为核心管理所有容器
 - 📦 **4 种创建方式** — 上传文件 / 粘贴内容 / 解析 docker run / 表单填写
-- 🖥️ **Web 终端** — 浏览器直接进入容器终端（xterm.js）
+- 🖥️ **Web 终端** — 浏览器直接进入容器终端
 - 📋 **实时日志** — WebSocket 实时日志流，支持搜索、高亮、下载
-- 📁 **文件管理** — 容器内文件浏览、上传、下载、删除、预览
-- 🔄 **更新检测** — 定时检测镜像更新，一键升级
+- 📁 **文件管理** — 容器内文件浏览、上传、下载、删除
+- 🔄 **镜像更新** — 检测镜像是否为最新版本，有更新才拉取
 - 🌐 **网络 & 存储** — 完整的 Docker 网络和 Volume 管理
-- 🔒 **单二进制** — 前端静态资源内嵌，无需 Nginx
-- 🔐 **HTTPS 支持** — 配置证书即可启用 TLS
+- 🔒 **单二进制** — 前端静态资源内嵌，无需 Nginx、无需配置文件
+- 🔐 **HTTPS 自动启用** — 在 cert 目录放置证书文件即可自动开启 TLS
 
 ## 快速开始
 
@@ -24,49 +23,57 @@
 
 ```bash
 # Linux amd64
-curl -L https://github.com/dockops/dockops/releases/latest/download/dockops-linux-amd64 -o dockops
-chmod +x dockops
+curl -L https://github.com/evecus/Dockps/releases/latest/download/dockps-linux-amd64 -o dockps
+chmod +x dockps
 
 # Linux arm64
-curl -L https://github.com/dockops/dockops/releases/latest/download/dockops-linux-arm64 -o dockops
-chmod +x dockops
+curl -L https://github.com/evecus/Dockps/releases/latest/download/dockps-linux-arm64 -o dockps
+chmod +x dockps
 ```
 
 ### 运行
 
 ```bash
-# 默认配置（HTTP :8080）
-./dockops
+# 直接运行，默认 HTTP 9080 端口
+./dockps
 
-# 指定配置文件
-./dockops -c config.yaml
+# 指定端口和数据目录（所有参数可选）
+./dockps --http 8080 --https 8443 --dir /opt/dockps/data
 ```
 
-首次访问 `http://your-server:8080` 将引导创建管理员账号。
+首次访问 `http://your-server:9080` 将引导创建管理员账号。
 
-### 配置文件
+### 参数说明
 
-```yaml
-# config.yaml
-http_port: 8080
-https_port: 8443
-cert_path: /path/to/cert.pem   # 可选
-key_path:  /path/to/key.pem    # 可选
-data_path: ./data
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `--http` | `9080` | HTTP 监听端口 |
+| `--https` | `9443` | HTTPS 监听端口（需有证书才生效） |
+| `--dir` | 二进制同级 `data/` 目录 | 数据存储目录 |
+
+### 启用 HTTPS
+
+将证书文件放入数据目录下的 `cert/` 文件夹，程序启动时自动检测并开启 HTTPS，无需任何配置：
+
+```
+data/
+└── cert/
+    ├── cert.pem      # 或 fullchain.pem / server.crt
+    └── key.pem       # 或 privkey.pem / server.key
 ```
 
 ### 以系统服务运行
 
 ```ini
-# /etc/systemd/system/dockops.service
+# /etc/systemd/system/dockps.service
 [Unit]
-Description=DockOps Docker Manager
+Description=DockPs Docker Manager
 After=docker.service
 Requires=docker.service
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/dockops -c /etc/dockops/config.yaml
+ExecStart=/usr/local/bin/dockps --http 9080 --dir /opt/dockps/data
 Restart=always
 RestartSec=5
 User=root
@@ -76,26 +83,28 @@ WantedBy=multi-user.target
 ```
 
 ```bash
-systemctl enable --now dockops
+systemctl enable --now dockps
 ```
 
 ## 从源码构建
 
 ```bash
-git clone https://github.com/dockops/dockops
-cd dockops
+git clone https://github.com/evecus/Dockps
+cd Dockps
 
-# 安装依赖并构建
-make build
+# 构建前端
+cd web && npm install && npm run build && cd ..
+
+# 构建二进制
+go build -o dockps .
 
 # 运行
-./dockops -c config.yaml
+./dockps
 ```
 
 **依赖：**
 - Go 1.22+
 - Node.js 20+
-- CGO（SQLite）：`gcc` 或 `musl-gcc`
 
 ## 技术栈
 
@@ -103,41 +112,34 @@ make build
 |---|---|
 | 后端 | Go + Gin + Docker SDK |
 | 前端 | Vue 3 + Vite（无 UI 框架） |
-| 数据库 | SQLite（嵌入式） |
+| 数据库 | SQLite（仅存账号和设置） |
 | 终端 | xterm.js + WebSocket |
-| 日志 | WebSocket 实时流 |
 | 认证 | JWT |
-| 构建 | GitHub Actions |
 
 ## 项目结构
 
 ```
-dockops/
-├── main.go                    # 入口
-├── config.yaml                # 配置示例
+Dockps/
+├── main.go
 ├── internal/
-│   ├── config/                # 配置加载
-│   ├── auth/                  # JWT 认证
-│   ├── db/                    # SQLite 操作
-│   ├── docker/                # Docker SDK 封装
-│   ├── compose/               # Compose 文件管理
-│   ├── parser/                # docker run 命令解析
-│   ├── handler/               # HTTP 路由 & 处理器
-│   ├── ws/                    # WebSocket（终端 + 日志）
-│   ├── scheduler/             # 定时任务（更新检测）
-│   └── middleware/            # JWT 中间件
-├── web/                       # Vue 3 前端
-│   ├── src/
-│   │   ├── views/             # 页面组件
-│   │   ├── components/        # 公共组件
-│   │   ├── api/               # API 客户端
-│   │   ├── stores/            # Pinia 状态
-│   │   └── styles/            # 全局样式
-│   └── dist/                  # 构建产物（内嵌到二进制）
-└── .github/workflows/         # CI/CD
-    └── build.yml
+│   ├── config/       # 启动参数与初始化
+│   ├── auth/         # JWT 认证
+│   ├── db/           # SQLite（账号 & 设置）
+│   ├── docker/       # Docker SDK 封装
+│   ├── compose/      # Compose 文件管理
+│   ├── parser/       # docker run 命令解析
+│   ├── handler/      # HTTP 路由 & 处理器
+│   ├── ws/           # WebSocket（终端 + 日志）
+│   ├── scheduler/    # 定时任务（仪表盘数据采集）
+│   └── middleware/   # JWT 中间件
+└── web/              # Vue 3 前端
+    └── src/
+        ├── views/
+        ├── components/
+        ├── api/
+        └── stores/
 ```
 
 ## License
 
-MIT © DockOps Contributors
+MIT
