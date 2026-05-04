@@ -85,7 +85,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, provide, onMounted } from 'vue'
 import { RouterLink, RouterView, useRouter, useRoute } from 'vue-router'
 import { LayoutDashboard, Box, Image, Network, Settings, LogOut, User, RefreshCw, Menu, X } from 'lucide-vue-next'
 import api from '@/api'
