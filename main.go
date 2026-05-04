@@ -15,12 +15,15 @@ import (
 var webFS embed.FS
 
 func main() {
-	configPath := flag.String("c", "config.yaml", "path to config file")
+	httpPort := flag.Int("http", 0, "HTTP port (default 9080)")
+	httpsPort := flag.Int("https", 0, "HTTPS port (default 9443, only if certs exist)")
+	dataDir := flag.String("dir", "", "data directory (default: ./data next to binary)")
 	flag.Parse()
 
-	cfg, err := config.Load(*configPath)
-	if err != nil {
-		log.Fatalf("Failed to load config: %v", err)
+	cfg := config.New(*httpPort, *httpsPort, *dataDir)
+
+	if err := cfg.Init(); err != nil {
+		log.Fatalf("Failed to initialize: %v", err)
 	}
 
 	database, err := db.Init(cfg.DataPath)
@@ -30,6 +33,11 @@ func main() {
 
 	sched := scheduler.New(database)
 	sched.Start()
+
+	log.Printf("DockOps starting — HTTP :%d  data: %s", cfg.HTTPPort, cfg.DataPath)
+	if cfg.CertPath != "" {
+		log.Printf("HTTPS enabled — :%d", cfg.HTTPSPort)
+	}
 
 	srv := handler.NewServer(cfg, database, webFS, sched)
 	if err := srv.Run(); err != nil {

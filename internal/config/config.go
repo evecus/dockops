@@ -2,40 +2,81 @@ package config
 
 import (
 	"os"
-
-	"gopkg.in/yaml.v3"
+	"path/filepath"
 )
 
 type Config struct {
-	HTTPPort  int    `yaml:"http_port"`
-	HTTPSPort int    `yaml:"https_port"`
-	CertPath  string `yaml:"cert_path"`
-	KeyPath   string `yaml:"key_path"`
-	DataPath  string `yaml:"data_path"`
+	HTTPPort  int
+	HTTPSPort int
+	CertPath  string
+	KeyPath   string
+	DataPath  string
 }
 
-func Load(path string) (*Config, error) {
+// New creates a Config from CLI flags.
+// Zero values mean "use default".
+func New(httpPort, httpsPort int, dataDir string) *Config {
 	cfg := &Config{
-		HTTPPort:  8080,
-		HTTPSPort: 8443,
-		DataPath:  "./data",
+		HTTPPort:  9080,
+		HTTPSPort: 9443,
+		DataPath:  defaultDataPath(),
 	}
+	if httpPort > 0 {
+		cfg.HTTPPort = httpPort
+	}
+	if httpsPort > 0 {
+		cfg.HTTPSPort = httpsPort
+	}
+	if dataDir != "" {
+		cfg.DataPath = dataDir
+	}
+	return cfg
+}
 
-	data, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return cfg, nil
+// Init creates required directories and auto-detects TLS certs.
+// Cert files must be placed in <dataPath>/cert/:
+//   - cert.pem  (or server.crt / fullchain.pem)
+//   - key.pem   (or server.key / privkey.pem)
+func (c *Config) Init() error {
+	certDir := filepath.Join(c.DataPath, "cert")
+	dirs := []string{c.DataPath, certDir, filepath.Join(c.DataPath, "compose")}
+	for _, d := range dirs {
+		if err := os.MkdirAll(d, 0755); err != nil {
+			return err
 		}
-		return nil, err
 	}
 
-	if err := yaml.Unmarshal(data, cfg); err != nil {
-		return nil, err
-	}
+	// Auto-detect cert/key pairs
+	certCandidates := []string{"cert.pem", "fullchain.pem", "server.crt"}
+	keyCandidates := []string{"key.pem", "privkey.pem", "server.key"}
 
-	if err := os.MkdirAll(cfg.DataPath, 0755); err != nil {
-		return nil, err
+	for _, cert := range certCandidates {
+		p := filepath.Join(certDir, cert)
+		if _, err := os.Stat(p); err == nil {
+			c.CertPath = p
+			break
+		}
 	}
+	for _, key := range keyCandidates {
+		p := filepath.Join(certDir, key)
+		if _, err := os.Stat(p); err == nil {
+			c.KeyPath = p
+			break
+		}
+	}
+	// Only enable HTTPS if both files are found
+	if c.CertPath == "" || c.KeyPath == "" {
+		c.CertPath = ""
+		c.KeyPath = ""
+	}
+	return nil
+}
 
-	return cfg, nil
+// defaultDataPath returns ./data relative to the current working directory.
+func defaultDataPath() string {
+	exe, err := os.Executable()
+	if err != nil {
+		return "./data"
+	}
+	return filepath.Join(filepath.Dir(exe), "data")
 }
