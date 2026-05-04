@@ -7,7 +7,6 @@ import (
 	"io"
 	"io/fs"
 	"net/http"
-	"net/url"
 	"strings"
 
 	"github.com/dockops/dockops/internal/auth"
@@ -92,7 +91,7 @@ func (s *Server) Run() error {
 			auth.GET("/images/check-update", s.checkImageUpdate)
 			auth.POST("/images/pull", s.pullImage)
 			auth.POST("/images/load", s.loadImage)
-			auth.DELETE("/images/:id", s.deleteImage)
+			auth.DELETE("/images/*id", s.deleteImage)
 
 			// Networks
 			auth.GET("/networks", s.listNetworks)
@@ -935,7 +934,8 @@ func (s *Server) loadImage(c *gin.Context) {
 }
 
 func (s *Server) deleteImage(c *gin.Context) {
-	id, _ := url.QueryUnescape(c.Param("id"))
+	// *id wildcard includes leading slash, e.g. "/evecus/webssh:latest"
+	id := strings.TrimPrefix(c.Param("id"), "/")
 	force := c.Query("force") == "true"
 
 	client, err := docker.NewClient()

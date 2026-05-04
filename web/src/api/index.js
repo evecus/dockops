@@ -68,7 +68,7 @@ export default {
   }),
   pullImage: (image) => api.post('/images/pull', { image }, { responseType: 'stream' }),
   loadImage: (file) => { const fd = new FormData(); fd.append('file', file); return api.post('/images/load', fd) },
-  deleteImage: (id, force=false) => api.delete(`/images/${encodeURIComponent(id)}`, { params: { force } }),
+  deleteImage: (id, force=false) => api.delete(`/images/${id}`, { params: { force } }),
 
   // Networks
   listNetworks: () => api.get('/networks'),
