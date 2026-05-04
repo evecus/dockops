@@ -16,6 +16,7 @@ import (
 	dockernetwork "github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/api/types/volume"
 	"github.com/docker/docker/client"
+	"github.com/docker/go-connections/nat"
 )
 
 type Client struct {
@@ -610,6 +611,93 @@ func (c *Client) GetImageID(ctx context.Context, ref string) (string, error) {
 		return "", err
 	}
 	return inspect.ID, nil
+}
+
+// RebuildContainer pulls a new image for the container, stops/removes the old
+// container, then recreates it with the exact same configuration.
+func (c *Client) RebuildContainer(ctx context.Context, name string) error {
+	// 1. Inspect existing container to capture full config
+	info, err := c.cli.ContainerInspect(ctx, name)
+	if err != nil {
+		return fmt.Errorf("inspect failed: %w", err)
+	}
+
+	img := info.Config.Image
+
+	// 2. Pull latest image
+	reader, err := c.cli.ImagePull(ctx, img, image.PullOptions{})
+	if err != nil {
+		return fmt.Errorf("pull failed: %w", err)
+	}
+	io.Copy(io.Discard, reader)
+	reader.Close()
+
+	// 3. Stop and remove old container
+	_ = c.cli.ContainerStop(ctx, name, container.StopOptions{})
+	if err := c.cli.ContainerRemove(ctx, name, container.RemoveOptions{Force: true}); err != nil {
+		return fmt.Errorf("remove failed: %w", err)
+	}
+
+	// 4. Rebuild port bindings
+	portBindings := nat.PortMap{}
+	exposedPorts := nat.PortSet{}
+	for port, bindings := range info.HostConfig.PortBindings {
+		portBindings[port] = bindings
+		exposedPorts[port] = struct{}{}
+	}
+
+	// 5. Rebuild volume binds
+	binds := info.HostConfig.Binds
+
+	// 6. Reconstruct network config (reconnect to same networks)
+	netConfig := &dockernetwork.NetworkingConfig{
+		EndpointsConfig: map[string]*dockernetwork.EndpointSettings{},
+	}
+	for netName, ep := range info.NetworkSettings.Networks {
+		netConfig.EndpointsConfig[netName] = &dockernetwork.EndpointSettings{
+			Aliases: ep.Aliases,
+		}
+	}
+
+	// 7. Create new container with same config
+	resp, err := c.cli.ContainerCreate(ctx,
+		&container.Config{
+			Image:        img,
+			Env:          info.Config.Env,
+			Cmd:          info.Config.Cmd,
+			Entrypoint:   info.Config.Entrypoint,
+			ExposedPorts: exposedPorts,
+			Labels:       info.Config.Labels,
+			User:         info.Config.User,
+			WorkingDir:   info.Config.WorkingDir,
+			Hostname:     info.Config.Hostname,
+		},
+		&container.HostConfig{
+			PortBindings:  portBindings,
+			Binds:         binds,
+			RestartPolicy: info.HostConfig.RestartPolicy,
+			NetworkMode:   info.HostConfig.NetworkMode,
+			Privileged:    info.HostConfig.Privileged,
+			CapAdd:        info.HostConfig.CapAdd,
+			CapDrop:       info.HostConfig.CapDrop,
+			ExtraHosts:    info.HostConfig.ExtraHosts,
+			Devices:       info.HostConfig.Devices,
+			ShmSize:       info.HostConfig.ShmSize,
+			LogConfig:     info.HostConfig.LogConfig,
+		},
+		netConfig,
+		nil,
+		name,
+	)
+	if err != nil {
+		return fmt.Errorf("create failed: %w", err)
+	}
+
+	// 8. Start
+	if err := c.cli.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+		return fmt.Errorf("start failed: %w", err)
+	}
+	return nil
 }
 
 // GetRemoteDigest fetches the remote manifest digest for a tag without downloading layers.

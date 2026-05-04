@@ -785,30 +785,38 @@ func (s *Server) deleteFile(c *gin.Context) {
 func (s *Server) updateContainerImage(c *gin.Context) {
 	name := c.Param("name")
 
-	if !s.compose.HasComposeFile(name) {
-		fail(c, 400, "no compose file found for this container")
+	client, err := docker.NewClient()
+	if err != nil {
+		fail(c, 500, err.Error())
 		return
+	}
+	defer client.Close()
+
+	if s.compose.HasComposeFile(name) {
+		// Compose container: pull + down + up
+		if err := s.compose.Pull(name); err != nil {
+			fail(c, 500, err.Error())
+			return
+		}
+		s.compose.Down(name)
+		if err := s.compose.Up(name); err != nil {
+			fail(c, 500, err.Error())
+			return
+		}
+	} else {
+		// Plain container: inspect → pull → remove → recreate with same config
+		if err := client.RebuildContainer(context.Background(), name); err != nil {
+			fail(c, 500, err.Error())
+			return
+		}
 	}
 
-	if err := s.compose.Pull(name); err != nil {
-		fail(c, 500, err.Error())
-		return
-	}
-	s.compose.Down(name)
-	if err := s.compose.Up(name); err != nil {
-		fail(c, 500, err.Error())
-		return
-	}
 	// Clear update flag for this container's image
-	client, err := docker.NewClient()
+	imgs, err := client.ListImages(context.Background())
 	if err == nil {
-		defer client.Close()
-		imgs, err := client.ListImages(context.Background())
-		if err == nil {
-			for _, img := range imgs {
-				for _, tag := range img.RepoTags {
-					s.sched.MarkImageUpdated(tag)
-				}
+		for _, img := range imgs {
+			for _, tag := range img.RepoTags {
+				s.sched.MarkImageUpdated(tag)
 			}
 		}
 	}
