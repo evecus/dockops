@@ -7,6 +7,7 @@ import (
 	"io"
 	"io/fs"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -570,13 +571,21 @@ func (s *Server) updateContainer(c *gin.Context) {
 func (s *Server) deleteContainer(c *gin.Context) {
 	name := c.Param("name")
 
-	// Use compose down if compose file exists, otherwise just rm -f
-	if s.compose.HasComposeFile(name) {
-		s.compose.Down(name)
-	} else {
-		compose.StopAndRemove(name)
+	client, err := docker.NewClient()
+	if err != nil {
+		fail(c, 500, err.Error())
+		return
+	}
+	defer client.Close()
+
+	// Stop first (ignore error if already stopped), then force remove
+	_ = client.StopContainer(context.Background(), name)
+	if err := client.RemoveContainer(context.Background(), name, true); err != nil {
+		fail(c, 500, err.Error())
+		return
 	}
 
+	// Clean up compose dir if present
 	s.compose.RemoveComposeDir(name)
 	ok(c, gin.H{"message": "deleted"})
 }
@@ -607,22 +616,15 @@ func (s *Server) startContainer(c *gin.Context) {
 func (s *Server) stopContainer(c *gin.Context) {
 	name := c.Param("name")
 
-	if s.compose.HasComposeFile(name) {
-		if err := s.compose.Down(name); err != nil {
-			fail(c, 500, err.Error())
-			return
-		}
-	} else {
-		client, err := docker.NewClient()
-		if err != nil {
-			fail(c, 500, err.Error())
-			return
-		}
-		defer client.Close()
-		if err := client.StopContainer(context.Background(), name); err != nil {
-			fail(c, 500, err.Error())
-			return
-		}
+	client, err := docker.NewClient()
+	if err != nil {
+		fail(c, 500, err.Error())
+		return
+	}
+	defer client.Close()
+	if err := client.StopContainer(context.Background(), name); err != nil {
+		fail(c, 500, err.Error())
+		return
 	}
 	ok(c, gin.H{"message": "stopped"})
 }
@@ -630,24 +632,15 @@ func (s *Server) stopContainer(c *gin.Context) {
 func (s *Server) restartContainer(c *gin.Context) {
 	name := c.Param("name")
 
-	if s.compose.HasComposeFile(name) {
-		s.compose.Down(name)
-		time.Sleep(time.Second)
-		if err := s.compose.Up(name); err != nil {
-			fail(c, 500, err.Error())
-			return
-		}
-	} else {
-		client, err := docker.NewClient()
-		if err != nil {
-			fail(c, 500, err.Error())
-			return
-		}
-		defer client.Close()
-		if err := client.RestartContainer(context.Background(), name); err != nil {
-			fail(c, 500, err.Error())
-			return
-		}
+	client, err := docker.NewClient()
+	if err != nil {
+		fail(c, 500, err.Error())
+		return
+	}
+	defer client.Close()
+	if err := client.RestartContainer(context.Background(), name); err != nil {
+		fail(c, 500, err.Error())
+		return
 	}
 	ok(c, gin.H{"message": "restarted"})
 }
@@ -943,7 +936,7 @@ func (s *Server) loadImage(c *gin.Context) {
 }
 
 func (s *Server) deleteImage(c *gin.Context) {
-	id := c.Param("id")
+	id, _ := url.QueryUnescape(c.Param("id"))
 	force := c.Query("force") == "true"
 
 	client, err := docker.NewClient()

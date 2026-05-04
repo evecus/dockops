@@ -64,13 +64,15 @@
 
         <!-- Actions -->
         <div class="ct-actions" @click.stop>
-          <button class="ct-action-btn" v-if="ct.state !== 'running'" @click="start(ct)">
+          <button class="ct-action-btn" v-if="ct.state !== 'running'"
+            @click="start(ct)" :disabled="!!pendingOp[ct.name]">
             <Play :size="13" /><span>启动</span>
           </button>
-          <button class="ct-action-btn" v-else @click="stop(ct)">
+          <button class="ct-action-btn" v-else
+            @click="stop(ct)" :disabled="!!pendingOp[ct.name]">
             <Square :size="13" /><span>停止</span>
           </button>
-          <button class="ct-action-btn" @click="restart(ct)">
+          <button class="ct-action-btn" @click="restart(ct)" :disabled="!!pendingOp[ct.name]">
             <RotateCcw :size="13" /><span>重启</span>
           </button>
           <button class="ct-action-btn" @click="openTerminal(ct)">
@@ -85,7 +87,7 @@
           <button class="ct-action-btn" @click="editContainer(ct)">
             <Pencil :size="13" /><span>编辑</span>
           </button>
-          <button class="ct-action-btn ct-action-danger" @click="confirmDelete(ct)">
+          <button class="ct-action-btn ct-action-danger" @click="confirmDelete(ct)" :disabled="!!pendingOp[ct.name]">
             <Trash2 :size="13" /><span>删除</span>
           </button>
         </div>
@@ -127,6 +129,7 @@
         <FilesModal :container="filesCt" @close="filesCt = null" />
       </div>
 
+      <!-- Delete confirm modal -->
       <div v-if="deleteCt" class="modal-overlay" @click.self="deleteCt = null">
         <div class="modal" style="max-width:420px">
           <div class="modal-header">
@@ -135,16 +138,12 @@
           </div>
           <div class="modal-body">
             <p style="color:var(--text-secondary);font-size:14px">
-              确定要删除容器 <strong style="color:var(--text-primary)">{{ deleteCt.name }}</strong> 吗？
-              这将停止并移除容器及其 Compose 配置。
+              确定要删除容器 <strong style="color:var(--text-primary)">{{ deleteCt.name }}</strong> 吗？此操作不可恢复。
             </p>
           </div>
           <div class="modal-footer">
             <button class="btn btn-ghost" @click="deleteCt = null">取消</button>
-            <button class="btn btn-danger" @click="doDelete" :disabled="deleting">
-              <div v-if="deleting" class="spinner" style="width:12px;height:12px;border-width:2px"></div>
-              确认删除
-            </button>
+            <button class="btn btn-danger" @click="doDelete">确认删除</button>
           </div>
         </div>
       </div>
@@ -179,8 +178,10 @@ const termCt = ref(null)
 const logsCt = ref(null)
 const filesCt = ref(null)
 const deleteCt = ref(null)
-const deleting = ref(false)
-const progressData = ref(null) // { name, compose_content }
+const progressData = ref(null)
+
+// Track in-progress operations per container name
+const pendingOp = ref({})
 
 const runningCount = computed(() => containers.value.filter(c => c.state === 'running').length)
 const filtered = computed(() => {
@@ -232,16 +233,45 @@ async function load() {
 }
 
 async function start(ct) {
-  try { await api.startContainer(ct.name); toast.success('已启动'); load() }
-  catch (e) { toast.error(e) }
+  pendingOp.value[ct.name] = true
+  toast.info(`正在启动 ${ct.name}…`)
+  try {
+    await api.startContainer(ct.name)
+    toast.success(`启动 ${ct.name} 成功`)
+    load()
+  } catch (e) {
+    toast.error(`启动 ${ct.name} 失败`)
+  } finally {
+    delete pendingOp.value[ct.name]
+  }
 }
+
 async function stop(ct) {
-  try { await api.stopContainer(ct.name); toast.success('已停止'); load() }
-  catch (e) { toast.error(e) }
+  pendingOp.value[ct.name] = true
+  toast.info(`正在停止 ${ct.name}…`)
+  try {
+    await api.stopContainer(ct.name)
+    toast.success(`停止 ${ct.name} 成功`)
+    load()
+  } catch (e) {
+    toast.error(`停止 ${ct.name} 失败`)
+  } finally {
+    delete pendingOp.value[ct.name]
+  }
 }
+
 async function restart(ct) {
-  try { await api.restartContainer(ct.name); toast.success('已重启'); load() }
-  catch (e) { toast.error(e) }
+  pendingOp.value[ct.name] = true
+  toast.info(`正在重启 ${ct.name}…`)
+  try {
+    await api.restartContainer(ct.name)
+    toast.success(`重启 ${ct.name} 成功`)
+    load()
+  } catch (e) {
+    toast.error(`重启 ${ct.name} 失败`)
+  } finally {
+    delete pendingOp.value[ct.name]
+  }
 }
 
 function openDetail(ct) { detailCt.value = ct }
@@ -252,15 +282,21 @@ function editContainer(ct) { editCt.value = ct; detailCt.value = null }
 function confirmDelete(ct) { deleteCt.value = ct }
 
 async function doDelete() {
-  if (!deleteCt.value) return
-  deleting.value = true
+  const ct = deleteCt.value
+  if (!ct) return
+  // Close confirm modal immediately
+  deleteCt.value = null
+  pendingOp.value[ct.name] = true
+  toast.info(`正在删除 ${ct.name}…`)
   try {
-    await api.deleteContainer(deleteCt.value.name)
-    toast.success('容器已删除')
-    deleteCt.value = null
+    await api.deleteContainer(ct.name)
+    toast.success(`删除 ${ct.name} 成功`)
     load()
-  } catch (e) { toast.error(e) }
-  finally { deleting.value = false }
+  } catch (e) {
+    toast.error(`删除 ${ct.name} 失败`)
+  } finally {
+    delete pendingOp.value[ct.name]
+  }
 }
 
 function onStartProgress(data) {
@@ -338,6 +374,7 @@ onMounted(load)
   cursor: pointer; transition: all var(--transition); flex: 1;
 }
 .ct-action-btn:hover { color: var(--accent-light); background: var(--accent-dim); border-color: var(--border-2); }
+.ct-action-btn:disabled { opacity: 0.4; cursor: not-allowed; pointer-events: none; }
 .ct-action-danger:hover {
   color: var(--red) !important; background: rgba(240,84,100,0.08) !important;
   border-color: rgba(240,84,100,0.2) !important;
