@@ -1,21 +1,15 @@
-# DockOps Changes
+# DockOps Patch 2 — Changed Files
 
-## Modified Files (place into corresponding project directories)
+## Files (覆盖到项目对应路径)
 
-```
-web/src/styles/global.css       — 全局样式重写：更大字体、专业配色、去除炫酷效果
-web/src/stores/i18n.js          — 新增：国际化 store，持久化中英切换
-web/src/views/Login.vue         — 登录页：增加右上角中英切换按钮，字体变大
-web/src/views/Layout.vue        — 主布局：顶部栏增加中英切换按钮，侧边栏文字国际化
-web/src/views/Dashboard.vue     — 仪表盘：所有文字国际化，字体变大
-```
+| 文件 | 变更 |
+|------|------|
+| `main.go` | 声明 `Version` 变量，通过 ldflags 注入，传入 Server |
+| `internal/handler/server.go` | Server 结构体增加 `version` 字段；`/api/system/status` 返回 `version` |
+| `internal/scheduler/scheduler.go` | 删除 "Dashboard data collected and cached" 日志输出 |
+| `web/src/styles/global.css` | 侧边栏 logo 字号 17→19px，导航项字号 14→15px，图标放大 |
+| `web/src/views/Layout.vue` | 删除顶部栏副标题（breadcrumb） |
+| `web/src/views/Settings.vue` | About 卡片加标题"关于"、图标移入卡片内、版本号动态读取；复制命令增加 execCommand fallback |
 
-## Changes Summary
-
-1. **字体变大** — base font-size: 14px → 15px，所有组件字体同步放大
-2. **专业现代设计** — 蓝色系（#2563eb）取代青色，去掉发光/渐变等装饰效果
-3. **中英切换** — 登录页右上角 + 主界面顶部栏均有切换按钮，选择持久化到 localStorage
-4. **i18n Store** — `web/src/stores/i18n.js`，通过 Pinia 管理语言状态
-
-## How to Add to Main.js (if Pinia not already set up)
-Already set up in the original project. No changes needed to main.js.
+## 版本号说明
+workflow 运行时 `-ldflags="-X main.Version=$TAG"` 已在原 main.yml 中配置，前端通过 `/api/system/status` 接口的 `version` 字段读取并显示。

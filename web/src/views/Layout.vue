@@ -44,7 +44,6 @@
           </button>
           <div>
             <div class="topbar-title">{{ currentTitle }}</div>
-            <div class="topbar-breadcrumb" v-if="currentDesc">{{ currentDesc }}</div>
           </div>
         </div>
         <div class="topbar-actions">

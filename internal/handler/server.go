@@ -28,15 +28,17 @@ type Server struct {
 	webFS   embed.FS
 	sched   *scheduler.Scheduler
 	compose *compose.Manager
+	version string
 }
 
-func NewServer(cfg *config.Config, database *db.DB, webFS embed.FS, sched *scheduler.Scheduler) *Server {
+func NewServer(cfg *config.Config, database *db.DB, webFS embed.FS, sched *scheduler.Scheduler, version string) *Server {
 	return &Server{
 		cfg:     cfg,
 		db:      database,
 		webFS:   webFS,
 		sched:   sched,
 		compose: compose.NewManager(cfg.DataPath),
+		version: version,
 	}
 }
 
@@ -169,7 +171,7 @@ func (s *Server) Run() error {
 
 func (s *Server) systemStatus(c *gin.Context) {
 	isSetup, _ := s.db.IsSetup()
-	ok(c, gin.H{"setup": isSetup})
+	ok(c, gin.H{"setup": isSetup, "version": s.version})
 }
 
 func (s *Server) setup(c *gin.Context) {

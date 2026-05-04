@@ -135,7 +135,6 @@ func (s *Scheduler) collectDashboard() {
 	}
 
 	s.Cache.Set(info, statsData)
-	log.Println("Dashboard data collected and cached")
 }
 
 func collectIntervalToSpec(d string) string {

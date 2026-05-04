@@ -14,6 +14,9 @@ import (
 //go:embed all:web/dist
 var webFS embed.FS
 
+// Version is set at build time via -ldflags "-X main.Version=vX.Y.Z"
+var Version = "dev"
+
 func main() {
 	httpPort := flag.Int("http", 0, "HTTP port (default 9080)")
 	httpsPort := flag.Int("https", 0, "HTTPS port (default 9443, only if certs exist)")
@@ -39,7 +42,7 @@ func main() {
 		log.Printf("HTTPS enabled — :%d", cfg.HTTPSPort)
 	}
 
-	srv := handler.NewServer(cfg, database, webFS, sched)
+	srv := handler.NewServer(cfg, database, webFS, sched, Version)
 	if err := srv.Run(); err != nil {
 		log.Fatalf("Server error: %v", err)
 	}

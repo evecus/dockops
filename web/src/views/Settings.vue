@@ -102,11 +102,11 @@
       <div class="card">
         <div class="card-header"><div class="card-title"><Terminal :size="16"/> 安装 Docker</div></div>
         <div class="card-body" style="display:flex;flex-direction:column;gap:14px">
-          <p style="font-size:13px;color:var(--text-secondary);line-height:1.7">通过官方安装脚本一键安装 Docker，支持 Debian / Ubuntu / CentOS / Fedora 等主流 Linux 发行版，需要 root 权限。</p>
+          <p style="font-size:14px;color:var(--text-secondary);line-height:1.7">通过官方安装脚本一键安装 Docker，支持 Debian / Ubuntu / CentOS / Fedora 等主流 Linux 发行版，需要 root 权限。</p>
           <div class="install-cmd">
             <span class="install-prompt">$</span>
             <span class="install-code">curl -fsSL https://get.docker.com | sh</span>
-            <button class="copy-btn" @click="copyInstallCmd"><Copy :size="13"/></button>
+            <button class="copy-btn" @click="copyInstallCmd" :title="copyTip"><Copy :size="13"/></button>
           </div>
           <div class="install-steps">
             <div class="step" v-for="(s,i) in installSteps" :key="i">
@@ -139,12 +139,17 @@
       </div>
 
       <!-- About -->
-      <div class="card about-card">
-        <div class="card-body" style="display:flex;flex-direction:column;align-items:center;gap:14px;padding:36px 24px">
-          <div class="about-logo"><Container :size="28" color="white"/></div>
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title"><Package :size="16"/> 关于</div>
+        </div>
+        <div class="card-body" style="display:flex;flex-direction:column;align-items:center;gap:16px;padding:28px 24px">
+          <div class="about-logo">
+            <img src="/apple-touch-icon.png" width="36" height="36" style="border-radius:8px;display:block;" alt="DockOps"/>
+          </div>
           <div style="text-align:center">
             <div class="about-name">DockOps</div>
-            <div class="about-ver">v1.0.0</div>
+            <div class="about-ver">{{ appVersion }}</div>
             <div class="about-desc">基于 Docker Compose 的现代化容器管理平台</div>
           </div>
           <div class="about-tech">
@@ -163,14 +168,18 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
-import { ShieldCheck, Bell, Globe, Terminal, Info, RefreshCw, Save, Eye, EyeOff, Copy, Container } from 'lucide-vue-next'
+import { ShieldCheck, Bell, Globe, Terminal, Info, RefreshCw, Save, Eye, EyeOff, Copy, Package } from 'lucide-vue-next'
 import api from '@/api'
 import { useToastStore } from '@/stores/toast'
+
 const toast = useToastStore()
 const showPwd = ref(false), savingAdmin = ref(false), savingSettings = ref(false)
 const dockerInfo = ref(null), adminUsername = ref('')
+const appVersion = ref('—')
 const admin = ref({ username: '', password: '', confirm: '' })
 const settings = ref({ update_check_interval: '6h', docker_proxy: '', collect_interval: '10m' })
+const copyTip = ref('复制')
+
 const mirrors = [
   { name: '阿里云', url: 'https://registry.cn-hangzhou.aliyuncs.com' },
   { name: 'DaoCloud', url: 'https://hub-mirror.c.163.com' },
@@ -178,6 +187,7 @@ const mirrors = [
   { name: 'USTC', url: 'https://docker.mirrors.ustc.edu.cn' },
 ]
 const installSteps = ['确保系统已更新并具有 root 权限', '执行下方安装命令，等待完成', '运行 docker version 验证安装', '将当前用户加入 docker 组（可选）']
+
 const dockerInfoRows = computed(() => {
   if (!dockerInfo.value) return []
   return [
@@ -190,7 +200,11 @@ const dockerInfoRows = computed(() => {
     { label: 'Docker 根目录', value: dockerInfo.value.docker_root_dir || '—' },
   ]
 })
-async function loadDockerInfo() { try { const r = await api.dashboardInfo(); dockerInfo.value = r.data } catch { dockerInfo.value = null } }
+
+async function loadDockerInfo() {
+  try { const r = await api.dashboardInfo(); dockerInfo.value = r.data } catch { dockerInfo.value = null }
+}
+
 async function loadSettings() {
   try {
     const r = await api.getSettings(); const data = r.data || {}
@@ -200,6 +214,14 @@ async function loadSettings() {
     adminUsername.value = data.admin_username || 'admin'
   } catch {}
 }
+
+async function loadVersion() {
+  try {
+    const r = await api.systemStatus()
+    appVersion.value = r.data?.version || 'dev'
+  } catch {}
+}
+
 async function saveAdmin() {
   if (!admin.value.username && !admin.value.password) { toast.error('请填写要修改的内容'); return }
   if (admin.value.password && admin.value.password !== admin.value.confirm) { toast.error('两次密码不一致'); return }
@@ -210,6 +232,7 @@ async function saveAdmin() {
     setTimeout(() => { localStorage.removeItem('token'); location.href = '/login' }, 1500)
   } catch (e) { toast.error(typeof e === 'string' ? e : '保存失败') } finally { savingAdmin.value = false }
 }
+
 async function saveSettings() {
   savingSettings.value = true
   try {
@@ -222,51 +245,66 @@ async function saveSettings() {
   }
   catch (e) { toast.error(typeof e === 'string' ? e : '保存失败') } finally { savingSettings.value = false }
 }
-function copyInstallCmd() {
-  navigator.clipboard.writeText('curl -fsSL https://get.docker.com | sh')
-    .then(() => toast.success('命令已复制到剪贴板')).catch(() => toast.error('复制失败'))
+
+async function copyInstallCmd() {
+  const text = 'curl -fsSL https://get.docker.com | sh'
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(text)
+    } else {
+      // Fallback for non-HTTPS or older browsers
+      const el = document.createElement('textarea')
+      el.value = text
+      el.style.position = 'fixed'
+      el.style.opacity = '0'
+      document.body.appendChild(el)
+      el.select()
+      document.execCommand('copy')
+      document.body.removeChild(el)
+    }
+    toast.success('命令已复制到剪贴板')
+  } catch {
+    toast.error('复制失败，请手动复制')
+  }
 }
-onMounted(() => { loadSettings(); loadDockerInfo() })
+
+onMounted(() => { loadSettings(); loadDockerInfo(); loadVersion() })
 </script>
 
 <style scoped>
 .settings-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(380px,1fr));gap:20px}
-.current-val{font-family:var(--font-mono);font-size:13px;color:var(--accent-light);padding:8px 12px;background:var(--bg-input);border-radius:var(--radius);border:1px solid var(--border)}
+.current-val{font-family:var(--font-mono);font-size:14px;color:var(--accent);padding:8px 13px;background:var(--bg-hover);border-radius:var(--radius);border:1px solid var(--border)}
 .pwd-toggle{position:absolute;right:10px;top:50%;transform:translateY(-50%);background:none;color:var(--text-muted);display:flex}
 .pwd-toggle:hover{color:var(--text-secondary)}
-.interval-hint{display:flex;align-items:flex-start;gap:8px;padding:10px 12px;background:rgba(6,182,212,0.05);border:1px solid rgba(6,182,212,0.12);border-radius:var(--radius);font-size:12px;color:var(--text-muted);line-height:1.5}
-.proxy-example{background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden}
+.interval-hint{display:flex;align-items:flex-start;gap:8px;padding:10px 12px;background:var(--accent-dim);border:1px solid rgba(37,99,235,0.12);border-radius:var(--radius);font-size:13px;color:var(--text-muted);line-height:1.5}
+.proxy-example{background:var(--bg-hover);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden}
 .example-title{padding:7px 12px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.6px;color:var(--text-muted);border-bottom:1px solid var(--border)}
 .example-list{display:flex;flex-direction:column}
-.example-item{display:flex;align-items:center;justify-content:space-between;padding:8px 12px;cursor:pointer;transition:background var(--transition);gap:12px}
-.example-item:hover{background:rgba(6,182,212,0.05)}
-.example-name{font-size:12.5px;font-weight:500;color:var(--text-secondary);flex-shrink:0}
-.example-url{font-size:11px;font-family:var(--font-mono);color:var(--text-muted);word-break:break-all}
-.install-cmd{display:flex;align-items:center;gap:8px;background:var(--bg-base);border:1px solid var(--border);border-radius:var(--radius);padding:10px 14px}
-.install-prompt{color:var(--green);font-family:var(--font-mono);font-size:13px;flex-shrink:0}
-.install-code{font-family:var(--font-mono);font-size:12.5px;color:var(--text-code);flex:1}
-.copy-btn{background:transparent;color:var(--text-muted);display:flex;padding:3px;border-radius:4px;cursor:pointer}
+.example-item{display:flex;align-items:center;justify-content:space-between;padding:9px 12px;cursor:pointer;transition:background var(--transition);gap:12px}
+.example-item:hover{background:var(--accent-dim)}
+.example-name{font-size:13.5px;font-weight:500;color:var(--text-secondary);flex-shrink:0}
+.example-url{font-size:12px;font-family:var(--font-mono);color:var(--text-muted);word-break:break-all}
+.install-cmd{display:flex;align-items:center;gap:8px;background:var(--bg-hover);border:1px solid var(--border);border-radius:var(--radius);padding:10px 14px}
+.install-prompt{color:var(--green);font-family:var(--font-mono);font-size:14px;flex-shrink:0}
+.install-code{font-family:var(--font-mono);font-size:13px;color:var(--text-code);flex:1}
+.copy-btn{background:transparent;color:var(--text-muted);display:flex;padding:4px;border-radius:4px;cursor:pointer;transition:color var(--transition)}
 .copy-btn:hover{color:var(--accent)}
-.install-steps{display:flex;flex-direction:column;gap:6px}
-.step{display:flex;align-items:center;gap:10px;font-size:12.5px;color:var(--text-muted)}
-.step-num{width:20px;height:20px;border-radius:50%;background:rgba(6,182,212,0.1);border:1px solid var(--border-2);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:var(--accent);flex-shrink:0}
+.install-steps{display:flex;flex-direction:column;gap:7px}
+.step{display:flex;align-items:center;gap:10px;font-size:13.5px;color:var(--text-muted)}
+.step-num{width:22px;height:22px;border-radius:50%;background:var(--accent-dim);border:1px solid rgba(37,99,235,0.2);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:var(--accent);flex-shrink:0}
 .info-table{width:100%}
-.info-key{font-size:12px;color:var(--text-muted);padding:5px 0;width:110px;font-weight:500}
-.info-val{font-size:12.5px;font-family:var(--font-mono);color:var(--text-secondary);padding:5px 0}
-.about-card{}
-.about-logo{width:60px;height:60px;background:linear-gradient(135deg,var(--cyan-500),var(--cyan-700));border-radius:16px;display:flex;align-items:center;justify-content:center;box-shadow:0 0 30px rgba(6,182,212,0.3)}
-.about-name{font-size:22px;font-weight:800;letter-spacing:-0.5px;margin-bottom:2px}
-.about-ver{font-size:12px;color:var(--accent);font-family:var(--font-mono);margin-bottom:8px}
-.about-desc{font-size:13px;color:var(--text-muted);line-height:1.5}
+.info-key{font-size:13px;color:var(--text-muted);padding:6px 0;width:120px;font-weight:500}
+.info-val{font-size:13.5px;font-family:var(--font-mono);color:var(--text-secondary);padding:6px 0}
+.about-logo{width:64px;height:64px;background:var(--bg-hover);border:1px solid var(--border);border-radius:16px;display:flex;align-items:center;justify-content:center}
+.about-name{font-size:22px;font-weight:700;letter-spacing:-0.5px;margin-bottom:3px}
+.about-ver{font-size:13px;color:var(--accent);font-family:var(--font-mono);margin-bottom:8px}
+.about-desc{font-size:13.5px;color:var(--text-muted);line-height:1.5}
 .about-tech{display:flex;flex-wrap:wrap;gap:6px;justify-content:center}
-.tech-badge{padding:3px 10px;border-radius:99px;font-size:11px;font-weight:600;background:rgba(6,182,212,0.08);color:var(--accent);border:1px solid rgba(6,182,212,0.15)}
+.tech-badge{padding:4px 11px;border-radius:99px;font-size:12px;font-weight:600;background:var(--accent-dim);color:var(--accent);border:1px solid rgba(37,99,235,0.15)}
 
 @media (max-width: 768px) {
-  .settings-grid {
-    grid-template-columns: 1fr;
-    gap: 14px;
-  }
+  .settings-grid { grid-template-columns: 1fr; gap: 14px; }
   .example-item { flex-direction: column; align-items: flex-start; gap: 2px; }
-  .install-code { font-size: 11px; word-break: break-all; }
+  .install-code { font-size: 12px; word-break: break-all; }
 }
 </style>
