@@ -53,21 +53,6 @@ jobs:
           go build -ldflags="-s -w -X main.Version=${{ steps.version.outputs.tag }}" \
             -o dist/dockops-linux-arm64 .
 
-      - name: Checksums
-        working-directory: dist
-        run: |
-          sha256sum dockops-linux-arm64 > dockops-linux-arm64.sha256
-
-      - name: Config example
-        run: |
-          cat > dist/config.yaml << 'EOF'
-          http_port: 8080
-          https_port: 8443
-          # cert_path: /path/to/cert.pem
-          # key_path: /path/to/key.pem
-          data_path: ./data
-          EOF
-
       - name: Create Git tag (workflow_dispatch only)
         if: github.event_name == 'workflow_dispatch'
         run: |
@@ -102,4 +87,3 @@ jobs:
             | `dockops-linux-arm64` | Linux ARM64 |
           files: |
             dist/dockops-linux-arm64
-            dist/config.yaml
