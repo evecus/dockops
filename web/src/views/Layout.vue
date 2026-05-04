@@ -98,9 +98,18 @@ const drawerOpen = ref(false)
 
 const isDashboard = computed(() => route.path === '/dashboard')
 
+// Shared dashboard data — provided to Dashboard.vue via inject
+const dashboardRefreshData = ref(null)
+provide('dashboardRefreshData', dashboardRefreshData)
+
 async function globalRefresh() {
+  if (route.path !== '/dashboard') return
   refreshing.value = true
-  try { await api.dashboardRefresh() } catch {}
+  try {
+    const res = await api.dashboardRefresh()
+    // Push fresh data down to Dashboard via provided ref
+    dashboardRefreshData.value = res.data
+  } catch {}
   finally { refreshing.value = false }
 }
 

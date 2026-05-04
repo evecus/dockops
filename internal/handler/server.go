@@ -238,8 +238,45 @@ func (s *Server) dashboardStats(c *gin.Context) {
 }
 
 func (s *Server) dashboardRefresh(c *gin.Context) {
+	// Collect synchronously so the response contains fresh data
 	s.sched.CollectNow()
-	ok(c, gin.H{"message": "refresh started"})
+	// Wait briefly for collection to complete, then return fresh data
+	client, err := docker.NewClient()
+	if err != nil {
+		fail(c, 500, err.Error())
+		return
+	}
+	defer client.Close()
+
+	ctx := context.Background()
+	info, err := client.GetSystemInfo(ctx)
+	if err != nil {
+		fail(c, 500, err.Error())
+		return
+	}
+
+	containers, _ := client.ListContainers(ctx)
+	var totalCPU float64
+	var totalMem, totalMemLimit uint64
+	for _, ct := range containers {
+		if ct.State == "running" {
+			if st, err := client.GetContainerStats(ctx, ct.ID); err == nil {
+				totalCPU += st.CPUPercent
+				totalMem += st.MemoryUsage
+				totalMemLimit += st.MemoryLimit
+			}
+		}
+	}
+
+	ok(c, gin.H{
+		"info": info,
+		"stats": gin.H{
+			"total_cpu_percent": totalCPU,
+			"total_mem_usage":   totalMem,
+			"total_mem_limit":   totalMemLimit,
+			"containers":        len(containers),
+		},
+	})
 }
 
 // ===== CONTAINERS =====

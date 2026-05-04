@@ -77,7 +77,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, inject, watch, onMounted } from 'vue'
 import {
   Server, Activity,
   Cpu, MemoryStick, HardDrive, Container, Box
@@ -88,6 +88,15 @@ const info = ref(null)
 const stats = ref(null)
 const loading = ref(true)
 const cacheTime = ref(null)
+
+// Injected from Layout.vue — updated when user clicks refresh
+const dashboardRefreshData = inject('dashboardRefreshData', ref(null))
+watch(dashboardRefreshData, (val) => {
+  if (!val) return
+  info.value = val.info
+  stats.value = val.stats
+  cacheTime.value = Date.now()
+})
 
 const cacheTimeText = computed(() => {
   if (!cacheTime.value) return ''
