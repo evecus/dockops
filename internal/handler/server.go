@@ -570,24 +570,29 @@ func (s *Server) deleteContainer(c *gin.Context) {
 	name := c.Param("name")
 	removeCompose := c.Query("remove_compose") == "true"
 
-	client, err := docker.NewClient()
-	if err != nil {
-		fail(c, 500, err.Error())
-		return
+	if s.compose.HasComposeFile(name) {
+		// compose down cleans up containers, networks, etc.
+		if err := s.compose.Down(name); err != nil {
+			fail(c, 500, err.Error())
+			return
+		}
+		if removeCompose {
+			s.compose.RemoveComposeDir(name)
+		}
+	} else {
+		client, err := docker.NewClient()
+		if err != nil {
+			fail(c, 500, err.Error())
+			return
+		}
+		defer client.Close()
+		_ = client.StopContainer(context.Background(), name)
+		if err := client.RemoveContainer(context.Background(), name, true); err != nil {
+			fail(c, 500, err.Error())
+			return
+		}
 	}
-	defer client.Close()
 
-	// Stop first (ignore error if already stopped), then force remove
-	_ = client.StopContainer(context.Background(), name)
-	if err := client.RemoveContainer(context.Background(), name, true); err != nil {
-		fail(c, 500, err.Error())
-		return
-	}
-
-	// Only remove compose dir if user explicitly requested it
-	if removeCompose {
-		s.compose.RemoveComposeDir(name)
-	}
 	ok(c, gin.H{"message": "deleted"})
 }
 
