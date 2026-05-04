@@ -33,6 +33,15 @@ export default {
   // Containers — all keyed by docker container name
   listContainers: () => api.get('/containers'),
   createContainer: (data) => api.post('/containers', data),
+  // Returns a fetch Response for SSE streaming
+  createContainerStream: (data) => fetch('/api/containers/stream', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${localStorage.getItem('token')}`,
+    },
+    body: JSON.stringify(data),
+  }),
   parseDockerRun: (command) => api.post('/containers/parse-run', { command }),
   getContainer: (name) => api.get(`/containers/${name}`),
   getContainerFormData: (name) => api.get(`/containers/${name}/form-data`),

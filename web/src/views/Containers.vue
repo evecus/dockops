@@ -95,7 +95,15 @@
     <!-- Modals -->
     <Teleport to="body">
       <div v-if="showCreate" class="modal-overlay" @click.self="showCreate = false">
-        <CreateContainerModal @close="showCreate = false" @created="onCreated" />
+        <CreateContainerModal @close="showCreate = false" @start-progress="onStartProgress" />
+      </div>
+
+      <div v-if="progressData" class="modal-overlay">
+        <CreateProgressModal
+          :name="progressData.name"
+          :compose-content="progressData.compose_content"
+          @close="progressData = null"
+          @created="onCreated" />
       </div>
 
       <div v-if="detailCt" class="modal-overlay" @click.self="detailCt = null">
@@ -153,6 +161,7 @@ import {
 import api from '@/api'
 import { useToastStore } from '@/stores/toast'
 import CreateContainerModal from '@/components/CreateContainerModal.vue'
+import CreateProgressModal from '@/components/CreateProgressModal.vue'
 import ContainerDetailModal from '@/components/ContainerDetailModal.vue'
 import EditContainerModal from '@/components/EditContainerModal.vue'
 import TerminalModal from '@/components/TerminalModal.vue'
@@ -171,6 +180,7 @@ const logsCt = ref(null)
 const filesCt = ref(null)
 const deleteCt = ref(null)
 const deleting = ref(false)
+const progressData = ref(null) // { name, compose_content }
 
 const runningCount = computed(() => containers.value.filter(c => c.state === 'running').length)
 const filtered = computed(() => {
@@ -253,12 +263,18 @@ async function doDelete() {
   finally { deleting.value = false }
 }
 
+function onStartProgress(data) {
+  showCreate.value = false
+  progressData.value = data
+}
+
 function onSaved() {
   editCt.value = null
   load()
 }
 function onCreated() {
   showCreate.value = false
+  progressData.value = null
   load()
 }
 

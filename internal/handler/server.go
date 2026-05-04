@@ -68,6 +68,7 @@ func (s *Server) Run() error {
 			// Containers — :name is the docker container name
 			auth.GET("/containers", s.listContainers)
 			auth.POST("/containers", s.createContainer)
+			auth.POST("/containers/stream", s.createContainerStream)
 			auth.POST("/containers/parse-run", s.parseDockerRun)
 			auth.GET("/containers/:name", s.getContainer)
 			auth.GET("/containers/:name/form-data", s.getContainerFormData)
@@ -323,6 +324,68 @@ func (s *Server) listContainers(c *gin.Context) {
 		result = append(result, info)
 	}
 	ok(c, result)
+}
+
+// createContainerStream handles SSE streaming creation of a container.
+// The client sends name + compose_content as query params or POST body via fetch,
+// and receives server-sent events with progress lines.
+func (s *Server) createContainerStream(c *gin.Context) {
+	var req struct {
+		Name           string `json:"name"`
+		ComposeContent string `json:"compose_content" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.SSEvent("error", err.Error())
+		return
+	}
+
+	name := strings.TrimSpace(req.Name)
+	if name == "" {
+		name = compose.ExtractNameFromCompose(req.ComposeContent)
+	}
+	if name == "" {
+		c.SSEvent("error", "cannot determine container name from compose content")
+		return
+	}
+
+	// Set SSE headers
+	c.Header("Content-Type", "text/event-stream")
+	c.Header("Cache-Control", "no-cache")
+	c.Header("Connection", "keep-alive")
+	c.Header("X-Accel-Buffering", "no")
+
+	send := func(event, data string) {
+		c.SSEvent(event, data)
+		c.Writer.Flush()
+	}
+
+	send("info", fmt.Sprintf("正在写入 Compose 配置: data/compose/%s/", name))
+	if err := s.compose.WriteCompose(name, req.ComposeContent); err != nil {
+		send("error", "写入配置失败: "+err.Error())
+		return
+	}
+
+	send("info", "正在拉取镜像并启动容器...")
+
+	lines := make(chan string, 64)
+	var upErr error
+
+	go func() {
+		defer close(lines)
+		upErr = s.compose.UpStream(name, lines)
+	}()
+
+	for line := range lines {
+		send("log", line)
+	}
+
+	if upErr != nil {
+		s.compose.RemoveComposeDir(name)
+		send("error", "启动失败: "+upErr.Error())
+		return
+	}
+
+	send("done", name)
 }
 
 // createContainer creates a new container.

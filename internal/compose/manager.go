@@ -85,6 +85,57 @@ func (m *Manager) Up(name string) error {
 	return nil
 }
 
+// UpStream runs docker compose up and streams output line by line to the provided channel.
+// Sends lines as they arrive; closes the channel when done.
+// Returns error if the command fails.
+func (m *Manager) UpStream(name string, lines chan<- string) error {
+	p := m.composePath(name)
+	cmd := exec.Command("docker", "compose", "-f", p, "up", "-d", "--pull", "always")
+	cmd.Dir = m.composeDir(name)
+
+	pr, pw, err := os.Pipe()
+	if err != nil {
+		return err
+	}
+	cmd.Stdout = pw
+	cmd.Stderr = pw
+
+	if err := cmd.Start(); err != nil {
+		pw.Close()
+		pr.Close()
+		return err
+	}
+
+	go func() {
+		defer pr.Close()
+		buf := make([]byte, 4096)
+		var partial string
+		for {
+			n, err := pr.Read(buf)
+			if n > 0 {
+				chunk := partial + string(buf[:n])
+				parts := strings.Split(chunk, "\n")
+				for _, part := range parts[:len(parts)-1] {
+					if strings.TrimSpace(part) != "" {
+						lines <- part
+					}
+				}
+				partial = parts[len(parts)-1]
+			}
+			if err != nil {
+				if strings.TrimSpace(partial) != "" {
+					lines <- partial
+				}
+				break
+			}
+		}
+	}()
+
+	err = cmd.Wait()
+	pw.Close()
+	return err
+}
+
 // Down runs docker compose down for the given container name.
 func (m *Manager) Down(name string) error {
 	p := m.composePath(name)

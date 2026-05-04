@@ -212,7 +212,7 @@ import { X, Plus, Upload, ClipboardPaste, Terminal, Settings2, RefreshCw, Wand2 
 import api from '@/api'
 import { useToastStore } from '@/stores/toast'
 
-const emit = defineEmits(['close', 'created'])
+const emit = defineEmits(['close', 'start-progress'])
 const toast = useToastStore()
 
 const mode = ref('upload')
@@ -302,39 +302,22 @@ async function submit() {
     const content = generatedYaml.value
     // name is embedded in the yaml via container_name, also pass explicitly
     const name = formName.value || formFields.value.image.split('/').pop().split(':')[0] || 'app'
-    submitting.value = true
-    try {
-      await api.createContainer({ name, compose_content: content })
-      toast.success('容器已创建并启动')
-      emit('created')
-    } catch (e) { toast.error(typeof e === 'string' ? e : '操作失败') }
-    finally { submitting.value = false }
+    // Emit to parent to show progress modal
+    emit('start-progress', { name, compose_content: content })
   } else {
     // upload / paste / run — name comes from compose content
+    // Auto-parse docker run if needed
+    if (mode.value === 'run' && !composeContent.value.trim() && runCmd.value.trim()) {
+      parsing.value = true
+      try {
+        const res = await api.parseDockerRun(runCmd.value.trim())
+        parsedYaml.value = res.data.yaml
+        composeContent.value = parsedYaml.value
+      } catch (e) { toast.error('解析失败: ' + e); parsing.value = false; return }
+      finally { parsing.value = false }
+    }
     if (!composeContent.value.trim()) { toast.error('请提供 Compose 内容'); return }
-    submitting.value = true
-    try {
-      // For docker run mode, auto-parse if user hasn't clicked parse yet
-      if (mode.value === 'run' && !composeContent.value.trim() && runCmd.value.trim()) {
-        parsing.value = true
-        try {
-          const res = await api.parseDockerRun(runCmd.value.trim())
-          parsedYaml.value = res.data.yaml
-          composeContent.value = parsedYaml.value
-        } catch (e) {
-          toast.error('解析失败: ' + e)
-          submitting.value = false
-          parsing.value = false
-          return
-        } finally { parsing.value = false }
-      }
-      if (!composeContent.value.trim()) { toast.error('请提供 Compose 内容'); submitting.value = false; return }
-      // Don't pass name — backend extracts it from compose content
-      await api.createContainer({ compose_content: composeContent.value })
-      toast.success('容器已创建并启动')
-      emit('created')
-    } catch (e) { toast.error(typeof e === 'string' ? e : '操作失败') }
-    finally { submitting.value = false }
+    emit('start-progress', { name: '', compose_content: composeContent.value })
   }
 }
 </script>
