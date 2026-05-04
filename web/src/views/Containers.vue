@@ -329,13 +329,13 @@ onMounted(load)
 .ct-info-val { color: var(--text-secondary); font-family: var(--font-mono); font-size: 11px; }
 .ct-ports { display: flex; flex-wrap: wrap; gap: 4px; }
 .ct-actions {
-  display: flex; flex-wrap: wrap; gap: 5px; padding-top: 8px; border-top: 1px solid var(--border);
+  display: flex; flex-wrap: nowrap; gap: 4px; padding-top: 8px; border-top: 1px solid var(--border);
 }
 .ct-action-btn {
   display: flex; flex-direction: column; align-items: center; gap: 3px;
-  padding: 6px 8px; border-radius: var(--radius); font-size: 10.5px; font-weight: 500;
+  padding: 6px 4px; border-radius: var(--radius); font-size: 10px; font-weight: 500;
   color: var(--text-muted); background: var(--bg-input); border: 1px solid var(--border);
-  cursor: pointer; transition: all var(--transition); min-width: 44px;
+  cursor: pointer; transition: all var(--transition); flex: 1;
 }
 .ct-action-btn:hover { color: var(--accent-light); background: var(--accent-dim); border-color: var(--border-2); }
 .ct-action-danger:hover {
